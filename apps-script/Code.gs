@@ -412,7 +412,7 @@ function makeManifest(dateStr) {
   sh.setFrozenRows(3);
   SpreadsheetApp.flush();
 
-  var pdfUrl = '', blob = null;
+  var pdfUrl = '', blob = null, pdfError = [];
   try {
     // 排版較好的匯出方式（A4 直式、縮放到頁寬、每頁重複標題列）
     var url = 'https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?format=pdf&size=A4&portrait=true&fitw=true' +
@@ -420,17 +420,28 @@ function makeManifest(dateStr) {
       '&top_margin=0.5&bottom_margin=0.5&left_margin=0.5&right_margin=0.5';
     var res = UrlFetchApp.fetch(url, { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
     if (res.getResponseCode() === 200) blob = res.getBlob();
-    else Logger.log('PDF 匯出回應 ' + res.getResponseCode());
+    else pdfError.push('匯出回應 ' + res.getResponseCode());
   } catch (e) {
-    Logger.log('PDF 匯出失敗，改用雲端硬碟轉檔：' + e);
+    pdfError.push('匯出：' + e.message);
   }
   try {
     if (!blob) blob = DriveApp.getFileById(ss.getId()).getAs(MimeType.PDF);
     pdfUrl = folder.createFile(blob.setName(title + '.pdf')).getUrl();
   } catch (e) {
-    Logger.log('PDF 產生失敗：' + e);
+    pdfError.push('轉檔：' + e.message);
   }
-  return { date: dateStr, groups: list.length, count: total, listed: listed, sheetUrl: ss.getUrl(), pdfUrl: pdfUrl };
+  if (pdfError.length) Logger.log('PDF 問題：' + pdfError.join('；'));
+  return { date: dateStr, groups: list.length, count: total, listed: listed, sheetUrl: ss.getUrl(), pdfUrl: pdfUrl,
+    pdfError: pdfUrl ? '' : pdfError.join('；') };
+}
+
+// 從編輯器執行，下方「執行紀錄」會顯示結果與 PDF 的錯誤原因
+function 測試產生PDF() {
+  var d = Utilities.formatDate(new Date(Date.now() + 3 * 864e5), TZ, 'yyyy-MM-dd');
+  var list = loadAll().bookings.filter(function (b) { return ACTIVE.indexOf(b.status) >= 0 && b.date >= Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'); });
+  if (list.length) d = list.map(function (b) { return b.date; }).sort()[0];
+  var res = makeManifest(d);
+  Logger.log(d + '：' + (res.groups ? (res.pdfUrl ? 'PDF 產生成功 ' + res.pdfUrl : 'PDF 失敗，原因：' + res.pdfError) : '這天沒有已成單的團'));
 }
 
 function manifestMenu() {

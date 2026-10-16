@@ -793,6 +793,7 @@ textarea{min-height:74px;resize:vertical}
         if(!x[1])return;
         var a=el("a","ghost",x[0]);a.href=x[1];a.target="_blank";a.rel="noopener";a.style.textDecoration="none";$("mLinks").appendChild(a);
       });
+      if(!m.pdfUrl&&m.pdfError)$("mLinks").appendChild(el("p","msg err","PDF 沒有產生（"+m.pdfError+"），可以開啟試算表版，從「檔案 → 列印」印出。"));
       $("mLinks").appendChild(el("p","msg","需用店家的 Google 帳號才能開啟。"));
     },function(err){
       if(err&&err.code==="auth")return;
