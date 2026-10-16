@@ -16,14 +16,16 @@ var SHEETS = {
     ['org', '學校／單位'], ['name', '聯絡人'], ['phone', '手機'], ['adult', '大人'], ['kid', '小孩'],
     ['tourId', '遊程編號'], ['slot', '抵達時段'], ['quote', '報價'], ['deposit', '訂金'], ['depositPaid', '已收訂金'],
     ['guides', '導覽員'], ['bus', '遊覽車／停車'], ['meal', '用餐'], ['tourNote', '客製行程內容'], ['note', '備註'],
-    ['createdAt', '建立時間'], ['passengers', '旅客名單'], ['source', '來源'], ['lineUser', 'LINE 使用者ID']
+    ['createdAt', '建立時間'], ['passengers', '旅客名單'], ['source', '來源'], ['lineUser', 'LINE 使用者ID'], ['boat', '船']
   ]},
   guides: { title: '導覽員', cols: [['id', '編號'], ['name', '姓名'], ['note', '備註']] },
-  tours: { title: '遊程', cols: [['id', '編號'], ['name', '遊程名稱'], ['meet', '集合地點'], ['content', '遊程內容']] }
+  tours: { title: '遊程', cols: [['id', '編號'], ['name', '遊程名稱'], ['meet', '集合地點'], ['content', '遊程內容']] },
+  boats: { title: '船隻', cols: [['id', '編號'], ['name', '船名'], ['capacity', '載客上限']],
+    seed: [['金波羅', 34], ['航海家16號', 45], ['公主268號', 45], ['航海家18號', 42]] }
 };
 var SETTINGS_TITLE = '設定';
 var SETTINGS = [['perGuide', '每位導覽員最多帶幾人']];
-var NUM = { adult: 1, kid: 1, quote: 1, deposit: 1 };
+var NUM = { adult: 1, kid: 1, quote: 1, deposit: 1, capacity: 1 };
 
 /* ---------- 試算表選單與初始化 ---------- */
 
@@ -92,6 +94,7 @@ function handle(req) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(req.date))) return { ok: false, code: 'error', message: '日期格式不對' };
     return { ok: true, manifest: makeManifest(req.date) };
   }
+  if (req.action === 'linePush') return linePush_(String(req.id || ''), String(req.text || ''));
 
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -176,6 +179,7 @@ function sheetOf(coll) {
     sh.getRange(1, 1, sh.getMaxRows(), def.cols.length).setNumberFormat('@');
     sh.getRange(1, 1, 1, def.cols.length).setValues([def.cols.map(function (c) { return c[1]; })]).setFontWeight('bold');
     sh.setFrozenRows(1);
+    (def.seed || []).forEach(function (r) { putRow(coll, newId(), { name: r[0], capacity: r[1] }, false); });
   }
   return sh;
 }
@@ -312,7 +316,7 @@ function writeSettings(d) {
 }
 
 function loadAll() {
-  return { bookings: readRows('bookings'), guides: readRows('guides'), tours: readRows('tours'), settings: readSettings() };
+  return { bookings: readRows('bookings'), guides: readRows('guides'), tours: readRows('tours'), boats: readRows('boats'), settings: readSettings() };
 }
 
 function newId() {
@@ -360,10 +364,16 @@ function safe_(v) {
 
 // 產生某一天的名冊（試算表＋PDF），同名的舊檔會移到垃圾桶。沒有團就不產生。
 function makeManifest(dateStr) {
-  var data = loadAll(), tours = {};
+  var data = loadAll(), tours = {}, boats = {};
   data.tours.forEach(function (t) { tours[t.id] = t; });
+  data.boats.forEach(function (t) { boats[t.id] = t.name; });
+  var boatOf = function (b) { return boats[b.boat] || ''; };
+  // 同一艘船的團排在一起，沒排船的放最後
   var list = data.bookings.filter(function (b) { return b.date === dateStr && ACTIVE.indexOf(b.status) >= 0; })
-    .sort(function (a, b) { return (a.time || '').localeCompare(b.time || '') || (a.createdAt || 0) - (b.createdAt || 0); });
+    .sort(function (a, b) {
+      return (boatOf(a) ? 0 : 1) - (boatOf(b) ? 0 : 1) || boatOf(a).localeCompare(boatOf(b)) ||
+        (a.time || '').localeCompare(b.time || '') || (a.createdAt || 0) - (b.createdAt || 0);
+    });
 
   var folder = manifestFolder(), title = '蹦火仔船班名冊 ' + dateStr;
   [title, title + '.pdf'].forEach(function (n) {
@@ -377,7 +387,7 @@ function makeManifest(dateStr) {
     var n = (+b.adult || 0) + (+b.kid || 0), pax = b.passengers || [], t = tours[b.tourId];
     total += n; listed += pax.length;
     var who = b.org ? b.org + '（' + (b.name || '未填聯絡人') + '）' : (b.name || '未填聯絡人');
-    var line = (b.time ? b.time + ' 集合　' : '') + who + (t ? '　' + t.name : '') + '　共 ' + n + ' 人' + (b.phone ? '　聯絡電話 ' + b.phone : '');
+    var line = (boatOf(b) ? '【' + boatOf(b) + '】' : '') + (b.time ? b.time + ' 集合　' : '') + who + (t ? '　' + t.name : '') + '　共 ' + n + ' 人' + (b.phone ? '　聯絡電話 ' + b.phone : '');
     rows.push([safe_(line), '', '', '', '']); kinds.push('group');
     pax.forEach(function (p) {
       seq++;
@@ -660,4 +670,30 @@ function parseInquiry_(txt) {
   });
   if (notes.length) o.note = notes.join('\n');
   return o;
+}
+
+// 接團台按「用 LINE 傳給客人」：用推播傳到這張團單記錄的 LINE 帳號（會用掉官方帳號的每月推播額度）
+function linePush_(id, text) {
+  var tok = PropertiesService.getScriptProperties().getProperty('LINE_TOKEN');
+  if (!tok) return { ok: false, code: 'no_line', message: '還沒設定 LINE 機器人' };
+  text = text.trim().slice(0, 5000);
+  if (!text) return { ok: false, code: 'error', message: '訊息是空的' };
+  var b = null;
+  readRows('bookings').forEach(function (r) { if (r.id === id) b = r; });
+  if (!b) return { ok: false, code: 'not_found' };
+  if (!b.lineUser) return { ok: false, code: 'error', message: '這張團單不是從 LINE 來的' };
+  var res = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + tok },
+    payload: JSON.stringify({ to: b.lineUser, messages: [{ type: 'text', text: text }] })
+  });
+  var c = res.getResponseCode();
+  if (c !== 200) {
+    console.error('LINE 推播失敗', c, res.getContentText());
+    var why = c === 429 ? '本月推播額度已用完，請改用複製後到 LINE 貼上' : c === 400 ? '客人可能已封鎖官方帳號' : 'LINE 回應 ' + c;
+    return { ok: false, code: 'line', message: why };
+  }
+  lineLogSheet().appendRow([Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm:ss'), '（接團台傳送）', b.lineUser,
+    text.charAt(0) === '=' ? ' ' + text : text, '傳給 ' + (b.name || b.org || '')]);
+  return { ok: true };
 }
