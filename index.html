@@ -197,7 +197,7 @@ textarea{min-height:74px;resize:vertical}
   var bookings=[],guides=[],tours=[],perGuide=0;
   var view="bookings",filter="全部",editId=null,editTour=null,armed=null,open={};
   var token=null,authed=false,canWrite=true,seq=0,appliedSeq=0,lastJson="",lastSync=null,pollTimer=null;
-  var WRITES={add:1,update:1,"delete":1,settings:1},inflight=0,queue=Promise.resolve(),errMsg="";
+  var WRITES={add:1,update:1,"delete":1,settings:1},inflight=0,writesStarted=0,queue=Promise.resolve(),errMsg="";
   var $=function(id){return document.getElementById(id)};
   function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
   function pad(n){return String(n).padStart(2,"0")}
@@ -217,7 +217,7 @@ textarea{min-height:74px;resize:vertical}
   function saveToken(t){try{if(t)localStorage.setItem(TOKEN_KEY,t);else localStorage.removeItem(TOKEN_KEY)}catch(e){}}
   function call(action,extra){
     if(!API_URL)return Promise.reject({code:"no_backend"});
-    var body={action:action,token:token},my=++seq;
+    var body={action:action,token:token},my=++seq,quiet=!inflight,w0=writesStarted;
     if(extra)Object.keys(extra).forEach(function(k){body[k]=extra[k]});
     return fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(body),redirect:"follow",cache:"no-store"})
       .then(function(r){if(!r.ok)throw {code:"unavailable"};return r.json()},function(){throw {code:"unavailable"}})
@@ -226,8 +226,9 @@ textarea{min-height:74px;resize:vertical}
           if(res&&res.code==="auth")showLogin("登入已過期或密碼已更改，請重新輸入密碼。");
           throw res||{code:"error"};
         }
-        // 還有別的修改在排隊時，不要用伺服器資料蓋掉畫面上剛改好的內容
-        if(res.data&&my>appliedSeq&&inflight===(WRITES[action]?1:0)){appliedSeq=my;apply(res.data)}
+        // 還有別的修改在排隊、或讀取期間有修改送出時，不要用（可能較舊的）伺服器資料蓋掉畫面
+        var ok=WRITES[action]?inflight===1:(quiet&&!inflight&&writesStarted===w0);
+        if(res.data&&my>appliedSeq&&ok){appliedSeq=my;apply(res.data)}
         return res;
       });
   }
@@ -261,7 +262,7 @@ textarea{min-height:74px;resize:vertical}
   /* 修改先顯示在畫面上，再依序送到試算表；失敗就還原成試算表上的資料 */
   function write(action,extra,local){
     if(local){local();render()}
-    inflight++;syncLine();
+    inflight++;writesStarted++;syncLine();
     var p=queue.then(function(){return call(action,extra)});
     queue=p.then(function(){errMsg=""},function(err){
       if(err&&err.code==="auth")return;
