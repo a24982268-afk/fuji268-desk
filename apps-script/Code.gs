@@ -16,7 +16,7 @@ var SHEETS = {
     ['org', '學校／單位'], ['name', '聯絡人'], ['phone', '手機'], ['adult', '大人'], ['kid', '小孩'],
     ['tourId', '遊程編號'], ['slot', '抵達時段'], ['quote', '報價'], ['deposit', '訂金'], ['depositPaid', '已收訂金'],
     ['guides', '導覽員'], ['bus', '遊覽車／停車'], ['meal', '用餐'], ['tourNote', '客製行程內容'], ['note', '備註'],
-    ['createdAt', '建立時間']
+    ['createdAt', '建立時間'], ['passengers', '旅客名單']
   ]},
   guides: { title: '導覽員', cols: [['id', '編號'], ['name', '姓名'], ['note', '備註']] },
   tours: { title: '遊程', cols: [['id', '編號'], ['name', '遊程名稱'], ['meet', '集合地點'], ['content', '遊程內容']] }
@@ -31,6 +31,9 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('接團台')
     .addItem('設定／更改登入密碼', 'setPasswordMenu')
     .addItem('讓所有裝置重新登入', 'logoutAllMenu')
+    .addSeparator()
+    .addItem('產生指定日期的船班名冊', 'manifestMenu')
+    .addItem('開啟名冊資料夾', 'openFolderMenu')
     .addToUi();
 }
 
@@ -80,6 +83,10 @@ function handle(req) {
   if (req.action === 'login') return login(String(req.password || ''));
   if (!checkToken(req.token)) return { ok: false, code: 'auth' };
   if (req.action === 'load') return { ok: true, data: loadAll() };
+  if (req.action === 'manifest') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(req.date))) return { ok: false, code: 'error', message: '日期格式不對' };
+    return { ok: true, manifest: makeManifest(req.date) };
+  }
 
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -184,7 +191,16 @@ function columnsOf(sh, coll) {
   var header = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), 1)).getDisplayValues()[0];
   var byLabel = {};
   SHEETS[coll].cols.forEach(function (c) { byLabel[c[1]] = c[0]; byLabel[c[0]] = c[0]; });
-  return header.map(function (h) { return byLabel[String(h).trim()] || null; });
+  var keys = header.map(function (h) { return byLabel[String(h).trim()] || null; });
+  // 程式新增的欄位（例如「旅客名單」）自動補在最右邊
+  SHEETS[coll].cols.forEach(function (c) {
+    if (keys.indexOf(c[0]) >= 0) return;
+    var at = keys.length + 1;
+    sh.getRange(1, at, sh.getMaxRows(), 1).setNumberFormat('@');
+    sh.getRange(1, at).setValue(c[1]).setFontWeight('bold');
+    keys.push(c[0]);
+  });
+  return keys;
 }
 
 function findRow(sh, id) {
@@ -206,6 +222,15 @@ function toCell(k, v) {
   if (k === 'depositPaid') return v ? '是' : '';
   if (k === 'createdAt') return v ? Utilities.formatDate(new Date(+v), TZ, 'yyyy-MM-dd HH:mm:ss') : '';
   if (NUM[k]) return (v === '' || v == null) ? '' : String(+v || 0);
+  if (k === 'passengers') {
+    // 一行一位：姓名｜證號｜出生年月日｜電話
+    var clean = function (x) { return String(x == null ? '' : x).replace(/[｜\r\n]/g, ' ').trim().slice(0, 100); };
+    var s2 = (Array.isArray(v) ? v : []).slice(0, 500).map(function (p) {
+      p = p || {};
+      return [clean(p.name), clean(p.id), clean(p.birth), clean(p.phone)].join('｜');
+    }).join('\n');
+    return s2.charAt(0) === '=' ? ' ' + s2 : s2;
+  }
   var s = String(v == null ? '' : v).slice(0, 5000);
   return s.charAt(0) === '=' ? ' ' + s : s;   // 避免被當成公式
 }
@@ -218,6 +243,12 @@ function fromCell(k, v) {
     return isNaN(t) ? 0 : t;
   }
   if (NUM[k]) return +v || 0;
+  if (k === 'passengers') {
+    return v ? v.split('\n').map(function (line) {
+      var f = line.split('｜');
+      return { name: (f[0] || '').trim(), id: (f[1] || '').trim(), birth: (f[2] || '').trim(), phone: (f[3] || '').trim() };
+    }).filter(function (p) { return p.name || p.id; }) : [];
+  }
   return v;
 }
 
@@ -281,4 +312,144 @@ function loadAll() {
 
 function newId() {
   return Utilities.getUuid().replace(/-/g, '').slice(0, 16);
+}
+
+/* ---------- 船班名冊（出發前自動產生，放在雲端硬碟） ---------- */
+
+var ACTIVE = ['已成單', '導覽員已排定', '已通知導覽員'];
+var MANIFEST_FOLDER = '蹦火仔船班名冊';
+var MANIFEST_HOUR = 7;   // 每天幾點自動產生
+
+// 執行一次即可：每天早上自動產生 3 天後的名冊，並更新 1、2 天後的名冊
+function 設定每日排程() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'dailyManifest') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('dailyManifest').timeBased().everyDays(1).atHour(MANIFEST_HOUR).inTimezone(TZ).create();
+  manifestFolder();
+  dailyManifest();
+  Logger.log('已設定：每天 ' + MANIFEST_HOUR + ' 點自動產生船班名冊，放在雲端硬碟「' + MANIFEST_FOLDER + '」資料夾。');
+}
+
+function dailyManifest() {
+  [3, 2, 1].forEach(function (d) {
+    makeManifest(Utilities.formatDate(new Date(Date.now() + d * 864e5), TZ, 'yyyy-MM-dd'));
+  });
+}
+
+function manifestFolder() {
+  var p = PropertiesService.getScriptProperties(), id = p.getProperty('FOLDER_ID');
+  if (id) {
+    try { var f = DriveApp.getFolderById(id); if (!f.isTrashed()) return f; } catch (e) {}
+  }
+  var it = DriveApp.getFoldersByName(MANIFEST_FOLDER);
+  var folder = it.hasNext() ? it.next() : DriveApp.createFolder(MANIFEST_FOLDER);
+  p.setProperty('FOLDER_ID', folder.getId());
+  return folder;
+}
+
+function safe_(v) {
+  var s = String(v == null ? '' : v);
+  return s.charAt(0) === '=' ? ' ' + s : s;
+}
+
+// 產生某一天的名冊（試算表＋PDF），同名的舊檔會移到垃圾桶。沒有團就不產生。
+function makeManifest(dateStr) {
+  var data = loadAll(), tours = {};
+  data.tours.forEach(function (t) { tours[t.id] = t; });
+  var list = data.bookings.filter(function (b) { return b.date === dateStr && ACTIVE.indexOf(b.status) >= 0; })
+    .sort(function (a, b) { return (a.time || '').localeCompare(b.time || '') || (a.createdAt || 0) - (b.createdAt || 0); });
+
+  var folder = manifestFolder(), title = '蹦火仔船班名冊 ' + dateStr;
+  [title, title + '.pdf'].forEach(function (n) {
+    var it = folder.getFilesByName(n);
+    while (it.hasNext()) it.next().setTrashed(true);
+  });
+  if (!list.length) return { date: dateStr, groups: 0, count: 0, listed: 0 };
+
+  var rows = [], kinds = [], total = 0, listed = 0, seq = 0;
+  list.forEach(function (b) {
+    var n = (+b.adult || 0) + (+b.kid || 0), pax = b.passengers || [], t = tours[b.tourId];
+    total += n; listed += pax.length;
+    var who = b.org ? b.org + '（' + (b.name || '未填聯絡人') + '）' : (b.name || '未填聯絡人');
+    var line = (b.time ? b.time + ' 集合　' : '') + who + (t ? '　' + t.name : '') + '　共 ' + n + ' 人' + (b.phone ? '　聯絡電話 ' + b.phone : '');
+    rows.push([safe_(line), '', '', '', '']); kinds.push('group');
+    pax.forEach(function (p) {
+      seq++;
+      rows.push([String(seq), safe_(p.name), safe_(p.id), safe_(p.birth), safe_(p.phone)]); kinds.push('pax');
+    });
+    if (pax.length < n) { rows.push(['', '（尚缺 ' + (n - pax.length) + ' 位旅客資料）', '', '', '']); kinds.push('lack'); }
+  });
+
+  var d = dateStr.split('-');
+  var wd = '日一二三四五六'.charAt(new Date(+d[0], +d[1] - 1, +d[2]).getDay());
+  var head = [
+    ['蹦火仔 船班旅客名冊　' + d[0] + '/' + (+d[1]) + '/' + (+d[2]) + '（' + wd + '）', '', '', '', ''],
+    ['共 ' + list.length + ' 團、' + total + ' 人，名單已填 ' + listed + ' 人　｜　產生時間 ' + Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm'), '', '', '', ''],
+    ['序號', '姓名', '身分證字號／護照', '出生年月日', '聯絡電話']
+  ];
+  var all = head.concat(rows), H = head.length;
+
+  var ss = SpreadsheetApp.create(title);
+  DriveApp.getFileById(ss.getId()).moveTo(folder);
+  var sh = ss.getSheets()[0];
+  sh.setName('名冊');
+  if (sh.getMaxColumns() > 5) sh.deleteColumns(6, sh.getMaxColumns() - 5);
+  if (sh.getMaxRows() < all.length) sh.insertRowsAfter(sh.getMaxRows(), all.length - sh.getMaxRows());
+  if (sh.getMaxRows() > all.length) sh.deleteRows(all.length + 1, sh.getMaxRows() - all.length);
+  sh.getRange(1, 1, all.length, 5).setNumberFormat('@').setValues(all).setFontSize(11).setVerticalAlignment('middle');
+  [56, 120, 170, 120, 130].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  sh.getRange(1, 1, 1, 5).merge().setFontSize(15).setFontWeight('bold');
+  sh.getRange(2, 1, 1, 5).merge().setFontColor('#555555');
+  sh.getRange(3, 1, 1, 5).setFontWeight('bold').setBackground('#eeeeee');
+  sh.getRange(3, 1, all.length - 2, 5).setBorder(true, true, true, true, true, true, '#999999', SpreadsheetApp.BorderStyle.SOLID);
+  sh.getRange(H + 1, 1, rows.length, 1).setHorizontalAlignment('center');
+  kinds.forEach(function (k, i) {
+    var r = H + 1 + i;
+    if (k === 'group') sh.getRange(r, 1, 1, 5).merge().setFontWeight('bold').setBackground('#fde7dc').setHorizontalAlignment('left');
+    if (k === 'lack') sh.getRange(r, 2, 1, 4).merge().setFontColor('#b42318');
+  });
+  sh.setFrozenRows(3);
+  SpreadsheetApp.flush();
+
+  var pdfUrl = '';
+  try {
+    var url = 'https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?format=pdf&size=A4&portrait=true&fitw=true' +
+      '&gridlines=false&printtitle=false&sheetnames=false&pagenum=CENTER&fzr=true' +
+      '&top_margin=0.5&bottom_margin=0.5&left_margin=0.5&right_margin=0.5';
+    var blob = UrlFetchApp.fetch(url, { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } }).getBlob();
+    pdfUrl = folder.createFile(blob.setName(title + '.pdf')).getUrl();
+  } catch (e) {
+    Logger.log('PDF 產生失敗：' + e);
+  }
+  return { date: dateStr, groups: list.length, count: total, listed: listed, sheetUrl: ss.getUrl(), pdfUrl: pdfUrl };
+}
+
+function manifestMenu() {
+  var ui = SpreadsheetApp.getUi();
+  var r = ui.prompt('產生船班名冊', '請輸入日期，例如 2026-10-20 或 10/20', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  var t = r.getResponseText().trim(), m, d = null;
+  if ((m = t.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/))) d = [m[1], m[2], m[3]];
+  else if ((m = t.match(/^(\d{1,2})[-\/.](\d{1,2})$/))) d = [Utilities.formatDate(new Date(), TZ, 'yyyy'), m[1], m[2]];
+  if (!d) { ui.alert('看不懂這個日期：' + t); return; }
+  var res = makeManifest(d[0] + '-' + ('0' + d[1]).slice(-2) + '-' + ('0' + d[2]).slice(-2));
+  if (!res.groups) { ui.alert(res.date + ' 沒有已成單的團，沒有產生名冊。'); return; }
+  showLinks_('名冊已產生', res.date + '：' + res.groups + ' 團、' + res.count + ' 人（名單已填 ' + res.listed + ' 人）',
+    [['開啟 PDF（可直接列印）', res.pdfUrl], ['開啟試算表版', res.sheetUrl]]);
+}
+
+function openFolderMenu() {
+  showLinks_('船班名冊資料夾', '每天早上 ' + MANIFEST_HOUR + ' 點自動產生 3 天後的名冊。', [['開啟資料夾', manifestFolder().getUrl()]]);
+}
+
+function showLinks_(title, text, links) {
+  var esc = function (s) {
+    return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
+  };
+  var html = '<div style="font-family:sans-serif;font-size:14px"><p>' + esc(text) + '</p>' +
+    links.filter(function (l) { return l[1]; }).map(function (l) {
+      return '<p><a href="' + esc(l[1]) + '" target="_blank">' + esc(l[0]) + '</a></p>';
+    }).join('') + '</div>';
+  SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(360).setHeight(180), title);
 }
