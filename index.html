@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>蹦火仔 接團台</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap">
+<style>
+/* Layout: one column, phone first. Section nav (團單/導覽員/遊程/設定), then per-section content. Booking cards carry the workflow: 成單 -> 群組找導覽員 -> 排定 -> 通知. */
+:root{
+  --bg:#eef0f2; --surface:#ffffff; --fg:#1b1e22; --muted:#5d6670; --line:#d3d8dd;
+  --ember:#c2410c; --ember-fg:#ffffff; --ember-soft:#fde7dc;
+  --ok:#17803d; --ok-soft:#dcf3e3; --warn:#9a6700; --warn-soft:#fbefc8; --bad:#b42318; --bad-soft:#fde4e1; --gray-soft:#e3e6e9; --info:#1d5fa8; --info-soft:#dce9f8;
+  --font:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#15171a; --surface:#1f2226; --fg:#eceff2; --muted:#9aa4ae; --line:#363b41;
+  --ember:#ff8a4c; --ember-fg:#1a0d05; --ember-soft:#3a2216;
+  --ok:#5fd68a; --ok-soft:#173824; --warn:#f0c75e; --warn-soft:#3b3012; --bad:#ff8f84; --bad-soft:#40201c; --gray-soft:#2c3035; --info:#7db6f2; --info-soft:#17304d; color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#15171a; --surface:#1f2226; --fg:#eceff2; --muted:#9aa4ae; --line:#363b41;
+  --ember:#ff8a4c; --ember-fg:#1a0d05; --ember-soft:#3a2216;
+  --ok:#5fd68a; --ok-soft:#173824; --warn:#f0c75e; --warn-soft:#3b3012; --bad:#ff8f84; --bad-soft:#40201c; --gray-soft:#2c3035; --info:#7db6f2; --info-soft:#17304d; color-scheme:dark;}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--font);font-size:15px;line-height:1.55;margin:0;
+  padding-top:max(20px,env(safe-area-inset-top,0px));padding-bottom:max(48px,env(safe-area-inset-bottom,0px));
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+h1{font-size:24px;font-weight:900;margin:0;line-height:1.2}
+.sub{color:var(--muted);font-size:13px;margin:2px 0 0}
+button{font:inherit;cursor:pointer}
+.primary{background:var(--ember);color:var(--ember-fg);border:0;border-radius:10px;padding:10px 16px;font-weight:700}
+.ghost{background:transparent;color:var(--fg);border:1.5px solid var(--line);border-radius:9px;padding:7px 12px;font-weight:500;font-size:14px}
+.ghost.danger{color:var(--bad)}
+.ghost.on{background:var(--ember);border-color:var(--ember);color:var(--ember-fg)}
+.ghost.warnb{border-color:var(--warn);color:var(--warn)}
+button:disabled{opacity:.5;cursor:default}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--ember);outline-offset:2px}
+.nav{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:5px}
+.nav button{border:0;background:transparent;color:var(--muted);font-weight:700;padding:9px 4px;border-radius:8px;min-width:0}
+.nav button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;min-width:0}
+.stat b{display:block;font-size:26px;font-weight:900;line-height:1.1;font-variant-numeric:tabular-nums}
+.stat span{font-size:12px;color:var(--muted)}
+.days{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
+.day{flex:0 0 auto;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 12px;min-width:112px}
+.day small{display:block;color:var(--muted);font-size:12px}
+.day small.lack{color:var(--bad);font-weight:700}
+.day b{font-variant-numeric:tabular-nums}
+.tabs{display:flex;gap:8px;overflow-x:auto}
+.tabs button{flex:0 0 auto;border:1.5px solid var(--line);background:var(--surface);color:var(--fg);border-radius:999px;padding:6px 14px;font-weight:500;font-size:14px}
+.tabs button[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.item .head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.item h3{margin:0;font-size:17px;font-weight:700;word-break:break-word}
+.meta{display:flex;flex-wrap:wrap;gap:4px 14px;color:var(--muted);font-size:14px}
+.meta b{color:var(--fg);font-weight:700}
+.pill{display:inline-block;font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;background:var(--gray-soft);color:var(--fg);white-space:nowrap}
+.pill.s-待確認{background:var(--warn-soft);color:var(--warn)}
+.pill.s-已成單{background:var(--info-soft);color:var(--info)}
+.pill.s-導覽員已排定{background:var(--ok-soft);color:var(--ok)}
+.pill.s-已通知導覽員{background:var(--ok-soft);color:var(--ok)}
+.pill.s-已完成{background:var(--gray-soft);color:var(--muted)}
+.pill.s-取消{background:var(--bad-soft);color:var(--bad)}
+.pill.lack{background:var(--bad-soft);color:var(--bad)}
+.pill.okp{background:var(--ok-soft);color:var(--ok)}
+.note{background:var(--bg);border-radius:8px;padding:8px 10px;font-size:14px;white-space:pre-wrap;word-break:break-word;margin:0}
+.acts{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.acts select{font:inherit;font-size:14px;padding:7px 8px;border-radius:9px;border:1.5px solid var(--line);background:var(--bg);color:var(--fg);max-width:100%}
+label{display:flex;flex-direction:column;gap:5px;font-size:14px;font-weight:500;min-width:0}
+input,select,textarea{font:inherit;font-size:16px;padding:10px 11px;border-radius:9px;border:1.5px solid var(--line);background:var(--bg);color:var(--fg);width:100%;min-width:0}
+textarea{min-height:74px;resize:vertical}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:420px){.grid{grid-template-columns:1fr}}
+.empty{text-align:center;color:var(--muted);padding:28px 12px}
+.msg{font-size:13px;color:var(--muted)}
+.msg.err{color:var(--bad);font-weight:500}
+.tpl{background:var(--ember-soft);border-radius:10px;padding:12px;white-space:pre-wrap;word-break:break-word;font-size:14px;margin:0;font-family:var(--font)}
+.sec{font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.06em;margin:0}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.col{display:flex;flex-direction:column;gap:12px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div><h1>接團台</h1><p class="sub" id="sync" role="status">連線中…</p></div>
+    <button class="primary" id="addBtn" type="button" hidden>新增團單</button>
+  </div>
+
+  <!-- 登入 -->
+  <form class="card" id="loginForm" hidden autocomplete="on">
+    <p class="sec">請輸入共用密碼</p>
+    <input type="text" name="username" value="蹦火仔接團台" autocomplete="username" hidden>
+    <label>密碼<input id="lPw" type="password" autocomplete="current-password" required></label>
+    <div class="acts"><button class="primary" type="submit" id="lBtn">登入</button><span class="msg" id="lMsg" role="status"></span></div>
+    <p class="msg" style="margin:0">密碼由店家在 Google 試算表設定。登入後這支手機 30 天內不用再輸入。</p>
+  </form>
+
+  <div class="nav" id="nav" role="group" aria-label="功能" hidden></div>
+
+  <!-- 團單 -->
+  <section id="v-bookings" class="col" hidden>
+    <div class="stats" id="stats"></div>
+    <div class="days" id="days" aria-label="未來 14 天已成單的團"></div>
+
+    <form class="card" id="form" hidden autocomplete="off">
+      <label id="pasteBox">貼上客人複製來的預約內容（自動帶入下方欄位）
+        <textarea id="paste" placeholder="把 LINE 或臉書收到的【蹦火仔 預約詢問】整段貼在這裡"></textarea>
+      </label>
+      <div class="grid">
+        <label>類型<select id="fType"><option>散客</option><option>學校</option><option>公司團體</option></select></label>
+        <label>學校／單位名稱<input id="fOrg"></label>
+        <label>聯絡人<input id="fName"></label>
+        <label>手機<input id="fPhone" inputmode="tel"></label>
+        <label>日期<input id="fDate" type="date"></label>
+        <label>集合時間<input id="fTime" type="time"></label>
+        <label>大人<input id="fAdult" type="number" min="0" inputmode="numeric"></label>
+        <label>小孩<input id="fKid" type="number" min="0" inputmode="numeric"></label>
+        <label>遊程<select id="fTour"></select></label>
+        <label>抵達時段（客人填的）<input id="fSlot"></label>
+        <label>報價（元）<input id="fQuote" type="number" min="0" inputmode="numeric"></label>
+        <label>訂金（元）<input id="fDeposit" type="number" min="0" inputmode="numeric"></label>
+      </div>
+      <label>遊覽車／停車<input id="fBus" placeholder="例：遊覽車 2 輛，10:00 到"></label>
+      <label>用餐與飲食禁忌<input id="fMeal" placeholder="例：素食 3 份、花生過敏 1 位"></label>
+      <label>本團客製行程內容（選填，客製行程時填寫，會一併傳給導覽員）<textarea id="fTourNote"></textarea></label>
+      <label>備註（單據、備案日期…）<textarea id="fNote"></textarea></label>
+      <div class="acts">
+        <button class="primary" type="submit" id="saveBtn">儲存團單</button>
+        <button class="ghost" type="button" id="cancelBtn">取消</button>
+        <span class="msg" id="fMsg" role="status"></span>
+      </div>
+    </form>
+
+    <div class="tabs" id="tabs" role="group" aria-label="狀態篩選"></div>
+    <div id="list" class="col"></div>
+  </section>
+
+  <!-- 導覽員 -->
+  <section id="v-guides" class="col" hidden>
+    <form class="card" id="gForm" autocomplete="off">
+      <p class="sec">新增導覽員</p>
+      <div class="grid">
+        <label>姓名<input id="gName"></label>
+        <label>備註（選填）<input id="gNote" placeholder="例：英語、只能週末"></label>
+      </div>
+      <div class="acts"><button class="primary" type="submit">加入名單</button><span class="msg" id="gMsg" role="status"></span></div>
+    </form>
+    <div id="gList" class="col"></div>
+  </section>
+
+  <!-- 遊程 -->
+  <section id="v-tours" class="col" hidden>
+    <form class="card" id="tForm" autocomplete="off">
+      <p class="sec" id="tHead">新增遊程</p>
+      <label>遊程名稱<input id="tName" placeholder="例：金山半日遊"></label>
+      <label>集合地點<input id="tMeet"></label>
+      <label>遊程內容（會原文傳給導覽員）<textarea id="tContent" style="min-height:120px" placeholder="依時間順序寫出當天行程、注意事項"></textarea></label>
+      <div class="acts"><button class="primary" type="submit" id="tSave">儲存遊程</button><button class="ghost" type="button" id="tCancel" hidden>取消編輯</button><span class="msg" id="tMsg" role="status"></span></div>
+    </form>
+    <div id="tList" class="col"></div>
+  </section>
+
+  <!-- 設定 -->
+  <section id="v-settings" class="col" hidden>
+    <form class="card" id="sForm">
+      <p class="sec">導覽員配置</p>
+      <label>每位導覽員最多帶幾人<input id="sPer" type="number" min="1" inputmode="numeric" placeholder="例：20"></label>
+      <p class="msg" style="margin:0">設定後，每個團單會依總人數自動算出需要幾位導覽員，不足時會標紅。</p>
+      <div class="acts"><button class="primary" type="submit">儲存</button><span class="msg" id="sMsg" role="status"></span></div>
+    </form>
+    <div class="card">
+      <p class="sec">這支手機</p>
+      <p class="msg" style="margin:0">登出後要重新輸入密碼才能看到資料。手機遺失或同事離職時，請店家到 Google 試算表的「接團台」選單更改密碼或讓所有裝置重新登入。</p>
+      <div class="acts"><button class="ghost danger" type="button" id="logoutBtn">登出這支手機</button></div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function(){
+  /* 後端：Google 試算表的 Apps Script 網頁應用程式網址（不是密碼，密碼只存在 Google 那邊） */
+  var API_URL="";
+  var TOKEN_KEY="fuji268-desk-token";
+  var POLL_MS=15000;
+
+  var STATUS=["待確認","已成單","導覽員已排定","已通知導覽員","已完成","取消"];
+  var ACTIVE=["已成單","導覽員已排定","已通知導覽員"];
+  var VIEWS=[["bookings","團單"],["guides","導覽員"],["tours","遊程"],["settings","設定"]];
+  var bookings=[],guides=[],tours=[],perGuide=0;
+  var view="bookings",filter="全部",editId=null,editTour=null,armed=null,open={},pending={};
+  var token=null,authed=false,canWrite=true,seq=0,appliedSeq=0,lastJson="",lastSync=null,pollTimer=null;
+  var $=function(id){return document.getElementById(id)};
+  function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+  function pad(n){return String(n).padStart(2,"0")}
+  function iso(d){return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())}
+  function today(){return iso(new Date())}
+  function addDays(s,n){var p=s.split("-");return iso(new Date(+p[0],+p[1]-1,+p[2]+n))}
+  function wd(s){var p=s.split("-");return "日一二三四五六"[new Date(+p[0],+p[1]-1,+p[2]).getDay()]}
+  function md(s){if(!s)return"日期未定";var p=s.split("-");return (+p[1])+"/"+(+p[2])+"（"+wd(s)+"）"}
+  function total(r){return (+r.adult||0)+(+r.kid||0)}
+  function need(r){return perGuide>0?Math.ceil(total(r)/perGuide):0}
+  function gl(r){return Array.isArray(r.guides)?r.guides:[]}
+  function who(r){return r.org?(r.org+"（"+(r.name||"未填聯絡人")+"）"):(r.name||"未填聯絡人")}
+  function tourOf(r){for(var i=0;i<tours.length;i++)if(tours[i].id===r.tourId)return tours[i];return null}
+
+  /* ---------- 後端連線 ---------- */
+  function loadToken(){try{return localStorage.getItem(TOKEN_KEY)}catch(e){return null}}
+  function saveToken(t){try{if(t)localStorage.setItem(TOKEN_KEY,t);else localStorage.removeItem(TOKEN_KEY)}catch(e){}}
+  function call(action,extra){
+    if(!API_URL)return Promise.reject({code:"no_backend"});
+    var body={action:action,token:token},my=++seq;
+    if(extra)Object.keys(extra).forEach(function(k){body[k]=extra[k]});
+    return fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(body),redirect:"follow",cache:"no-store"})
+      .then(function(r){if(!r.ok)throw {code:"unavailable"};return r.json()},function(){throw {code:"unavailable"}})
+      .then(function(res){
+        if(!res||!res.ok){
+          if(res&&res.code==="auth")showLogin("登入已過期或密碼已更改，請重新輸入密碼。");
+          throw res||{code:"error"};
+        }
+        if(res.data&&my>appliedSeq){appliedSeq=my;apply(res.data)}
+        return res;
+      });
+  }
+  function apply(d){
+    lastSync=new Date();
+    var j=JSON.stringify(d);
+    if(j!==lastJson){
+      lastJson=j;
+      bookings=d.bookings||[];guides=d.guides||[];tours=d.tours||[];
+      perGuide=d.settings&&+d.settings.perGuide>0?+d.settings.perGuide:0;
+      render();
+    }
+    syncLine();
+  }
+  function syncLine(){
+    if(!authed)return;
+    $("sync").textContent="團單共 "+bookings.length+" 筆，每 15 秒自動同步"+(lastSync?"（最後更新 "+pad(lastSync.getHours())+":"+pad(lastSync.getMinutes())+":"+pad(lastSync.getSeconds())+"）":"");
+  }
+  function refresh(){
+    if(!authed||document.hidden)return Promise.resolve();
+    return call("load").catch(fail);
+  }
+  function startPolling(){stopPolling();pollTimer=setInterval(refresh,POLL_MS)}
+  function stopPolling(){if(pollTimer){clearInterval(pollTimer);pollTimer=null}}
+  document.addEventListener("visibilitychange",function(){if(!document.hidden)refresh()});
+
+  /* 對應原本的 db.doc(...).update / collection.add / delete / set */
+  var db={
+    add:function(coll,data){return call("add",{collection:coll,data:data})},
+    update:function(coll,id,data){return call("update",{collection:coll,id:id,data:data})},
+    remove:function(coll,id){return call("delete",{collection:coll,id:id})},
+    settings:function(data){return call("settings",{data:data})}
+  };
+
+  function fail(err){
+    var c=err&&err.code,m="操作失敗，請稍後再試";
+    if(c==="auth")return;
+    if(c==="unavailable")m="網路不穩，請稍後再試";
+    else if(c==="not_found")m="這筆資料已被其他人刪除";
+    else if(c==="no_backend")m="還沒設定後端網址";
+    $("sync").textContent=m;
+  }
+  function copy(text,btn){
+    var old=btn.textContent;
+    function done(m){btn.textContent=m;setTimeout(function(){btn.textContent=old},1600)}
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(function(){done("已複製")},function(){done("請手動選取")})}else done("請手動選取");
+  }
+  function upd(id,data){
+    if(pending[id])return Promise.resolve();
+    pending[id]=true;
+    $("sync").textContent="儲存中…";
+    return db.update("bookings",id,data).then(syncLine,fail).then(function(){pending[id]=false;render()});
+  }
+
+  /* ---------- 登入 ---------- */
+  function showLogin(msg){
+    authed=false;token=null;saveToken(null);stopPolling();
+    bookings=[];guides=[];tours=[];perGuide=0;lastJson="";open={};
+    closeForm();
+    $("sync").textContent="請先登入";
+    $("lMsg").textContent=msg||"";$("lMsg").className="msg"+(msg?" err":"");
+    render();
+    $("lPw").focus();
+  }
+  function enter(){
+    authed=true;render();syncLine();startPolling();
+  }
+  $("loginForm").addEventListener("submit",function(e){
+    e.preventDefault();
+    var pw=$("lPw").value;if(!pw)return;
+    $("lBtn").disabled=true;$("lMsg").className="msg";$("lMsg").textContent="驗證中…";
+    call("login",{password:pw}).then(function(res){
+      token=res.token;saveToken(token);$("lPw").value="";$("lMsg").textContent="";
+      return call("load").then(enter);
+    }).catch(function(err){
+      var c=err&&err.code,m="登入失敗，請稍後再試";
+      if(c==="wrong_password")m="密碼不對，請再試一次。";
+      else if(c==="locked")m="密碼輸錯太多次，請 15 分鐘後再試。";
+      else if(c==="no_password")m="店家還沒設定密碼，請到 Google 試算表的「接團台」選單設定。";
+      else if(c==="unavailable")m="連不上伺服器，請檢查網路。";
+      else if(c==="no_backend")m="還沒設定後端網址。";
+      $("lMsg").className="msg err";$("lMsg").textContent=m;
+    }).then(function(){$("lBtn").disabled=false});
+  });
+  $("logoutBtn").onclick=function(){view="bookings";showLogin("已登出。")};
+
+  /* message templates */
+  function peopleLine(r){return total(r)+" 位（大人 "+(+r.adult||0)+"／小孩 "+(+r.kid||0)+"）"}
+  function who2(r){return r.type+(r.org?"・"+r.org:"")}
+  function groupAsk(r){
+    var t=tourOf(r),n=need(r),L=["【徵求導覽員】","日期："+md(r.date)];
+    L.push("集合時間："+(r.time||"待定"));
+    L.push("集合地點："+(t&&t.meet?t.meet:"待定"));
+    L.push("遊程："+(t?t.name:"待定"));
+    L.push("人數："+peopleLine(r));
+    L.push("客群："+who2(r));
+    if(n)L.push("需要導覽員："+n+" 位");
+    L.push("有空的請回覆，謝謝！");
+    return L.join("\n");
+  }
+  function guideNotice(r){
+    var t=tourOf(r),g=gl(r),L=["【帶團通知】","導覽員："+(g.length?g.join("、"):"待排定")];
+    L.push("日期："+md(r.date));
+    L.push("集合時間："+(r.time||"待定"));
+    L.push("集合地點："+(t&&t.meet?t.meet:"待定"));
+    L.push("遊程："+(t?t.name:"待定"));
+    if(t&&t.content)L.push("遊程內容：\n"+t.content);
+    if(r.tourNote)L.push((t&&t.content?"本團調整：\n":"遊程內容：\n")+r.tourNote);
+    L.push("人數："+peopleLine(r));
+    L.push("客群："+who2(r));
+    return L.join("\n");
+  }
+  function replies(r){
+    var g=(r.name||"您")+"您好，";
+    return [
+      ["確認收到",g+"這裡是蹦火仔，已收到您 "+md(r.date)+" 的預約詢問（共 "+total(r)+" 位）。我們確認導覽員後會盡快回覆您，謝謝！"],
+      ["確認成功",g+"蹦火仔已為您安排 "+md(r.date)+(r.time?" "+r.time+" 集合":"")+"，共 "+total(r)+" 位。若人數或時間有變動，請提前告知我們，謝謝！"],
+      ["補問細節",g+"想再跟您確認幾個細節：抵達時間、實際人數、用餐與交通方式，以及是否有行動不便或特殊需求。方便的話請直接回覆，謝謝！"],
+      ["日期客滿",g+"很抱歉，"+md(r.date)+" 已無法安排。請問是否可以改到其他日期？我們幫您看看可行的時段。"]
+    ];
+  }
+
+  /* render */
+  function renderNav(){
+    $("loginForm").hidden=authed;
+    $("nav").hidden=!authed;
+    var n=$("nav");n.textContent="";
+    VIEWS.forEach(function(v){var b=el("button",null,v[1]);b.type="button";b.setAttribute("aria-pressed",v[0]===view?"true":"false");
+      b.onclick=function(){view=v[0];render()};n.appendChild(b)});
+    VIEWS.forEach(function(v){$("v-"+v[0]).hidden=!authed||v[0]!==view});
+    $("addBtn").hidden=!authed||view!=="bookings"||!canWrite;
+  }
+  function renderStats(){
+    var t=today(),end=addDays(t,6);
+    var pend=bookings.filter(function(r){return r.status==="待確認"}).length;
+    var toAssign=bookings.filter(function(r){return r.status==="已成單"}).length;
+    var week=bookings.filter(function(r){return ACTIVE.indexOf(r.status)>=0&&r.date>=t&&r.date<=end}).reduce(function(a,r){return a+total(r)},0);
+    var s=$("stats");s.textContent="";
+    [["待確認團單",pend+" 團"],["待排導覽員",toAssign+" 團"],["7 日內帶團",week+" 人"]].forEach(function(x){
+      var d=el("div","stat");d.appendChild(el("b",null,x[1]));d.appendChild(el("span",null,x[0]));s.appendChild(d)});
+    var days=$("days");days.textContent="";
+    var by={};
+    bookings.forEach(function(r){if(ACTIVE.indexOf(r.status)>=0&&r.date>=t&&r.date<=addDays(t,13)){(by[r.date]=by[r.date]||[]).push(r)}});
+    Object.keys(by).sort().forEach(function(k){
+      var rs=by[k],p=0,needTotal=0,names=[];
+      rs.forEach(function(r){p+=total(r);needTotal+=need(r);gl(r).forEach(function(n){if(names.indexOf(n)<0)names.push(n)})});
+      var assigned=rs.reduce(function(a,r){return a+gl(r).length},0);
+      var d=el("div","day");d.appendChild(el("small",null,md(k)));
+      d.appendChild(el("b",null,p+" 人／"+rs.length+" 團"));
+      d.appendChild(el("small",null,names.length?"導覽："+names.join("、"):"尚未排導覽員"));
+      if(needTotal>assigned)d.appendChild(el("small","lack","還缺 "+(needTotal-assigned)+" 位"));
+      days.appendChild(d)});
+    days.hidden=!Object.keys(by).length;
+  }
+  function renderTabs(){
+    var t=$("tabs");t.textContent="";
+    ["全部"].concat(STATUS).forEach(function(s){
+      var n=s==="全部"?bookings.length:bookings.filter(function(r){return r.status===s}).length;
+      var b=el("button",null,s+" "+n);b.type="button";b.setAttribute("aria-pressed",s===filter?"true":"false");
+      b.onclick=function(){filter=s;render()};t.appendChild(b)});
+  }
+  function busyOn(r,name){
+    return bookings.filter(function(o){return o.id!==r.id&&o.date===r.date&&o.status!=="取消"&&gl(o).indexOf(name)>=0}).length;
+  }
+  function assignPanel(r){
+    var box=el("div","col");
+    box.appendChild(el("p","sec","點選導覽員加入或移除"));
+    if(!guides.length){box.appendChild(el("p","msg","還沒有導覽員名單。請到「導覽員」頁新增。"));return box}
+    var chips=el("div","chips");
+    guides.slice().sort(function(a,b){return (a.name||"").localeCompare(b.name||"","zh-Hant")}).forEach(function(g){
+      var on=gl(r).indexOf(g.name)>=0,busy=busyOn(r,g.name);
+      var b=el("button","ghost"+(on?" on":(busy?" warnb":"")),g.name+(busy?"（當日已 "+busy+" 團）":""));
+      b.type="button";b.disabled=!canWrite||!!pending[r.id];b.setAttribute("aria-pressed",on?"true":"false");
+      b.onclick=function(){
+        var cur=gl(r).slice(),i=cur.indexOf(g.name);
+        if(i>=0)cur.splice(i,1);else cur.push(g.name);
+        var data={guides:cur};
+        if(cur.length&&r.status==="已成單")data.status="導覽員已排定";
+        if(!cur.length&&(r.status==="導覽員已排定"||r.status==="已通知導覽員"))data.status="已成單";
+        upd(r.id,data);
+      };
+      chips.appendChild(b)});
+    box.appendChild(chips);
+    return box;
+  }
+  function tplBox(label,text){
+    var box=el("div","col");box.style.gap="6px";
+    box.appendChild(el("pre","tpl",text));
+    var b=el("button","ghost","複製「"+label+"」");b.type="button";b.style.alignSelf="flex-start";b.onclick=function(){copy(text,b)};
+    box.appendChild(b);return box;
+  }
+  function renderList(){
+    var L=$("list");L.textContent="";
+    var vis=bookings.filter(function(r){return filter==="全部"||r.status===filter});
+    vis.sort(function(a,b){return (a.date||"9999").localeCompare(b.date||"9999")||(a.time||"").localeCompare(b.time||"")||(a.createdAt||0)-(b.createdAt||0)});
+    if(!vis.length){
+      L.appendChild(el("div","card empty",bookings.length?"這個狀態目前沒有團單。":"還沒有團單。按「新增團單」，或把客人複製來的預約內容貼進去，就會自動帶入欄位。"));
+      return;
+    }
+    vis.forEach(function(r){
+      var c=el("div","card item"),h=el("div","head"),left=el("div");
+      left.appendChild(el("h3",null,who(r)));
+      var m=el("div","meta"),a=el("span");
+      a.appendChild(el("b",null,md(r.date)));if(r.time)a.appendChild(document.createTextNode(" "+r.time+" 集合"));m.appendChild(a);
+      var p=el("span");p.appendChild(el("b",null,total(r)+" 人"));p.appendChild(document.createTextNode("（大人 "+(+r.adult||0)+"／小孩 "+(+r.kid||0)+"）"));m.appendChild(p);
+      if(r.phone)m.appendChild(el("span",null,r.phone));
+      var t=tourOf(r);if(t)m.appendChild(el("span",null,"遊程："+t.name));
+      left.appendChild(m);h.appendChild(left);
+      var pl=el("div");pl.style.cssText="display:flex;flex-direction:column;gap:6px;align-items:flex-end";
+      pl.appendChild(el("span","pill s-"+r.status,r.status));pl.appendChild(el("span","pill",r.type||"散客"));
+      h.appendChild(pl);c.appendChild(h);
+
+      var n=need(r),g=gl(r);
+      if(ACTIVE.indexOf(r.status)>=0||g.length){
+        var gp=el("div","acts");
+        gp.appendChild(el("span","pill "+((n&&g.length<n)||!g.length?"lack":"okp"),"導覽員 "+g.length+(n?"／需 "+n:"")+" 位"));
+        if(g.length)gp.appendChild(el("span",null,g.join("、")));
+        c.appendChild(gp);
+      }
+      var info=[];
+      if(r.quote)info.push("報價 $"+(+r.quote).toLocaleString()+(r.deposit?"，訂金 $"+(+r.deposit).toLocaleString()+(r.depositPaid?"（已收）":"（未收）"):""));
+      if(r.bus)info.push("車輛："+r.bus);
+      if(r.meal)info.push("用餐："+r.meal);
+      if(info.length)c.appendChild(el("p","note",info.join("\n")));
+      if(r.note)c.appendChild(el("p","note",r.note));
+
+      var acts=el("div","acts");
+      var sel=el("select");sel.setAttribute("aria-label","變更狀態");
+      STATUS.forEach(function(s){var o=el("option",null,s);o.value=s;if(s===r.status)o.selected=true;sel.appendChild(o)});
+      sel.disabled=!canWrite||!!pending[r.id];sel.onchange=function(){upd(r.id,{status:sel.value})};
+      acts.appendChild(sel);
+      function tog(label,key){
+        var b=el("button","ghost"+(open[r.id]===key?" on":""),label);b.type="button";
+        b.onclick=function(){open[r.id]=open[r.id]===key?null:key;render()};acts.appendChild(b);
+      }
+      tog("找導覽員","ask");tog("排導覽員","assign");
+      if(g.length)tog("通知導覽員","notice");
+      tog("回覆客人","reply");
+      var ed=el("button","ghost","編輯");ed.type="button";ed.disabled=!canWrite;ed.onclick=function(){startEdit(r)};acts.appendChild(ed);
+      if(r.deposit&&!r.depositPaid){
+        var pb=el("button","ghost","標記已收訂金");pb.type="button";pb.disabled=!canWrite;pb.onclick=function(){upd(r.id,{depositPaid:true})};acts.appendChild(pb);
+      }
+      var del=el("button","ghost danger",armed===r.id?"再按一次確認刪除":"刪除");del.type="button";del.disabled=!canWrite;
+      del.onclick=function(){
+        if(armed!==r.id){armed=r.id;render();return}
+        armed=null;del.disabled=true;del.textContent="刪除中…";db.remove("bookings",r.id).catch(fail);
+      };
+      acts.appendChild(del);c.appendChild(acts);
+
+      var o=open[r.id];
+      if(o==="ask"){
+        var miss=[];if(!r.time)miss.push("集合時間");if(!t)miss.push("遊程");if(!n)miss.push("每位導覽員人數（設定頁）");
+        if(miss.length)c.appendChild(el("p","msg","訊息中尚未填：「"+miss.join("、")+"」，請先補上再傳。"));
+        c.appendChild(tplBox("群組徵求訊息",groupAsk(r)));
+        c.appendChild(el("p","msg","貼到 LINE 群組後，等有人回覆，再到「排導覽員」選人。"));
+      }
+      if(o==="assign")c.appendChild(assignPanel(r));
+      if(o==="notice"){
+        c.appendChild(tplBox("導覽員通知",guideNotice(r)));
+        if(r.status!=="已通知導覽員"&&canWrite){
+          var mk=el("button","ghost","標記已通知導覽員");mk.type="button";mk.style.alignSelf="flex-start";mk.onclick=function(){upd(r.id,{status:"已通知導覽員"})};c.appendChild(mk);
+        }
+      }
+      if(o==="reply")replies(r).forEach(function(x){c.appendChild(tplBox(x[0],x[1]))});
+      L.appendChild(c);
+    });
+  }
+
+  /* guides view */
+  function renderGuides(){
+    var L=$("gList");L.textContent="";
+    if(!guides.length){L.appendChild(el("div","card empty","還沒有導覽員。先加入名單，排導覽員時才能點選。"));return}
+    var t=today();
+    guides.slice().sort(function(a,b){return (a.name||"").localeCompare(b.name||"","zh-Hant")}).forEach(function(g){
+      var c=el("div","card item"),h=el("div","head");
+      var left=el("div");left.appendChild(el("h3",null,g.name));if(g.note)left.appendChild(el("p","sub",g.note));
+      var up=bookings.filter(function(r){return r.date>=t&&ACTIVE.indexOf(r.status)>=0&&gl(r).indexOf(g.name)>=0}).sort(function(a,b){return a.date.localeCompare(b.date)});
+      left.appendChild(el("p","sub",up.length?"待帶團："+up.map(function(r){return md(r.date)}).join("、"):"目前沒有待帶的團"));
+      h.appendChild(left);
+      var del=el("button","ghost danger",armed==="g"+g.id?"再按一次確認刪除":"刪除");del.type="button";del.disabled=!canWrite;
+      del.onclick=function(){if(armed!=="g"+g.id){armed="g"+g.id;render();return}armed=null;del.disabled=true;db.remove("guides",g.id).catch(fail)};
+      h.appendChild(del);c.appendChild(h);L.appendChild(c);
+    });
+  }
+  /* tours view */
+  function renderTours(){
+    var L=$("tList");L.textContent="";
+    if(!tours.length){L.appendChild(el("div","card empty","還沒有遊程。把常帶的行程寫一次，之後團單選取即可，通知導覽員時會自動帶入內容。"));return}
+    tours.forEach(function(t){
+      var c=el("div","card item"),h=el("div","head");
+      var left=el("div");left.appendChild(el("h3",null,t.name));if(t.meet)left.appendChild(el("p","sub","集合：「"+t.meet+"」"));
+      h.appendChild(left);c.appendChild(h);
+      if(t.content)c.appendChild(el("p","note",t.content));
+      var acts=el("div","acts");
+      var ed=el("button","ghost","編輯");ed.type="button";ed.disabled=!canWrite;
+      ed.onclick=function(){editTour=t.id;$("tName").value=t.name||"";$("tMeet").value=t.meet||"";$("tContent").value=t.content||"";render();$("tName").focus()};
+      acts.appendChild(ed);
+      var del=el("button","ghost danger",armed==="t"+t.id?"再按一次確認刪除":"刪除");del.type="button";del.disabled=!canWrite;
+      del.onclick=function(){if(armed!=="t"+t.id){armed="t"+t.id;render();return}armed=null;del.disabled=true;db.remove("tours",t.id).catch(fail)};
+      acts.appendChild(del);c.appendChild(acts);L.appendChild(c);
+    });
+  }
+  function renderTourForm(){
+    $("tHead").textContent=editTour?"編輯遊程":"新增遊程";
+    $("tCancel").hidden=!editTour;
+    var cur=$("fTour").value,s=$("fTour");s.textContent="";
+    var o0=el("option","", "未選");o0.value="";s.appendChild(o0);
+    tours.forEach(function(t){var o=el("option",null,t.name);o.value=t.id;s.appendChild(o)});
+    s.value=cur;
+  }
+  function render(){
+    renderNav();
+    if(!authed)return;
+    if(view==="bookings"){renderStats();renderTabs();renderList()}
+    if(view==="guides")renderGuides();
+    if(view==="tours"){renderTourForm();renderTours()}
+    if(view==="settings"&&document.activeElement!==$("sPer"))$("sPer").value=perGuide||"";
+  }
+
+  /* booking form */
+  function parse(txt){
+    var o={};
+    txt.split(/\r?\n/).forEach(function(line){
+      var i=line.search(/[：:]/);if(i<0)return;
+      var k=line.slice(0,i).trim(),v=line.slice(i+1).trim();
+      if(k==="類型"&&/散客|學校|公司團體/.test(v))o.type=v.match(/散客|學校|公司團體/)[0];
+      else if(k==="學校"||k==="單位")o.org=v;
+      else if(k==="聯絡人"&&v.indexOf("（未填）")<0)o.name=v;
+      else if(k==="手機"&&v.indexOf("（未填）")<0)o.phone=v;
+      else if(k==="首選日期"){var m=v.match(/(\d{4})\/(\d{2})\/(\d{2})/);if(m)o.date=m[1]+"-"+m[2]+"-"+m[3]}
+      else if(k==="抵達時段")o.slot=v;
+      else if(k==="人數"){
+        var a=v.match(/(?:全票|大人)\s*(\d+)/),b=v.match(/7[–-]12\s*歲\s*(\d+)/),c=v.match(/6\s*歲以下\s*(\d+)/),kk=v.match(/小孩\s*(\d+)/);
+        if(a)o.adult=a[1];
+        if(b||c)o.kid=String((b?+b[1]:0)+(c?+c[1]:0));else if(kk)o.kid=kk[1];
+        if(b||c)o.note=(o.note?o.note+"\n":"")+"人數明細："+v.replace(/，共.*$/,"");
+      }
+      else if(k==="遊程")o.tourName=v;
+      else if(k==="預估費用"){var q=v.replace(/[^\d]/g,"");if(q)o.quote=q}
+      else if(k==="交通")o.bus=v;
+      else if(k==="用餐")o.meal=v;
+      else if(["備案日期","LINE","年級／班級","帶隊老師","單據","備註"].indexOf(k)>=0){o.note=(o.note?o.note+"\n":"")+k+"："+v}
+    });
+    return o;
+  }
+  var FIELDS={type:"fType",org:"fOrg",name:"fName",phone:"fPhone",date:"fDate",time:"fTime",adult:"fAdult",kid:"fKid",tourId:"fTour",slot:"fSlot",quote:"fQuote",deposit:"fDeposit",bus:"fBus",meal:"fMeal",note:"fNote",tourNote:"fTourNote"};
+  function fillForm(o){
+    if(o.tourName){for(var i=0;i<tours.length;i++)if(tours[i].name===o.tourName)o.tourId=tours[i].id}
+    Object.keys(FIELDS).forEach(function(k){if(o[k]!=null&&o[k]!=="")$(FIELDS[k]).value=o[k]})}
+  function startEdit(r){
+    editId=r.id;$("form").reset();renderTourForm();fillForm(r);
+    $("pasteBox").hidden=true;$("saveBtn").textContent="儲存修改";$("form").hidden=false;$("fMsg").textContent="";
+    $("form").scrollIntoView({block:"start"});
+  }
+  function closeForm(){editId=null;$("form").reset();$("form").hidden=true;$("pasteBox").hidden=false;$("saveBtn").textContent="儲存團單";$("saveBtn").disabled=false}
+  $("paste").addEventListener("input",function(){var o=parse($("paste").value);if(Object.keys(o).length>1)fillForm(o)});
+  $("addBtn").onclick=function(){
+    if(!$("form").hidden&&!editId){closeForm();return}
+    editId=null;$("form").reset();renderTourForm();$("pasteBox").hidden=false;$("saveBtn").textContent="儲存團單";$("form").hidden=false;$("paste").focus();
+  };
+  $("cancelBtn").onclick=closeForm;
+  $("form").addEventListener("submit",function(e){
+    e.preventDefault();
+    if(!authed){$("fMsg").textContent="目前無法儲存";return}
+    var doc={type:$("fType").value,org:$("fOrg").value.trim(),name:$("fName").value.trim(),phone:$("fPhone").value.trim(),
+      date:$("fDate").value,time:$("fTime").value,slot:$("fSlot").value.trim(),adult:+$("fAdult").value||0,kid:+$("fKid").value||0,
+      tourId:$("fTour").value,note:$("fNote").value.trim(),bus:$("fBus").value.trim(),meal:$("fMeal").value.trim(),
+      tourNote:$("fTourNote").value.trim(),quote:+$("fQuote").value||0,deposit:+$("fDeposit").value||0};
+    if(!doc.name&&!doc.org){$("fMsg").textContent="請至少填聯絡人或單位名稱";return}
+    $("fMsg").textContent="儲存中…";$("saveBtn").disabled=true;
+    var p;
+    if(editId){p=db.update("bookings",editId,doc)}
+    else{doc.depositPaid=false;doc.guides=[];doc.status="待確認";p=db.add("bookings",doc)}
+    p.then(function(){closeForm();$("fMsg").textContent="";syncLine()},function(err){$("fMsg").textContent="";$("saveBtn").disabled=false;fail(err)});
+  });
+
+  /* guides / tours / settings forms */
+  $("gForm").addEventListener("submit",function(e){
+    e.preventDefault();var name=$("gName").value.trim();
+    if(!name){$("gMsg").textContent="請填姓名";return}
+    if(name.indexOf("、")>=0){$("gMsg").textContent="姓名不能有「、」";return}
+    if(guides.some(function(g){return g.name===name})){$("gMsg").textContent="名單已有同名導覽員";return}
+    $("gMsg").textContent="儲存中…";
+    db.add("guides",{name:name,note:$("gNote").value.trim()}).then(function(){$("gForm").reset();$("gMsg").textContent=""},function(err){$("gMsg").textContent="";fail(err)});
+  });
+  $("tForm").addEventListener("submit",function(e){
+    e.preventDefault();var d={name:$("tName").value.trim(),meet:$("tMeet").value.trim(),content:$("tContent").value.trim()};
+    if(!d.name){$("tMsg").textContent="請填遊程名稱";return}
+    $("tMsg").textContent="儲存中…";
+    var p=editTour?db.update("tours",editTour,d):db.add("tours",d);
+    p.then(function(){editTour=null;$("tForm").reset();$("tMsg").textContent="";render()},function(err){$("tMsg").textContent="";fail(err)});
+  });
+  $("tCancel").onclick=function(){editTour=null;$("tForm").reset();render()};
+  $("sForm").addEventListener("submit",function(e){
+    e.preventDefault();var n=+$("sPer").value||0;
+    $("sMsg").textContent="儲存中…";
+    db.settings({perGuide:n}).then(function(){$("sMsg").textContent="已儲存"},function(err){$("sMsg").textContent="";fail(err)});
+  });
+
+  function start(){
+    token=loadToken();
+    if(!API_URL){showLogin("還沒設定後端網址。");return}
+    if(!token){showLogin();return}
+    $("sync").textContent="連線中…";
+    call("load").then(enter,function(err){
+      if(err&&err.code==="auth")return;
+      authed=true;render();startPolling();fail(err);
+    });
+  }
+  render();
+  start();
+})();
+</script>
+</body>
+</html>
