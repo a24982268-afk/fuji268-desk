@@ -412,12 +412,20 @@ function makeManifest(dateStr) {
   sh.setFrozenRows(3);
   SpreadsheetApp.flush();
 
-  var pdfUrl = '';
+  var pdfUrl = '', blob = null;
   try {
+    // 排版較好的匯出方式（A4 直式、縮放到頁寬、每頁重複標題列）
     var url = 'https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?format=pdf&size=A4&portrait=true&fitw=true' +
       '&gridlines=false&printtitle=false&sheetnames=false&pagenum=CENTER&fzr=true' +
       '&top_margin=0.5&bottom_margin=0.5&left_margin=0.5&right_margin=0.5';
-    var blob = UrlFetchApp.fetch(url, { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } }).getBlob();
+    var res = UrlFetchApp.fetch(url, { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+    if (res.getResponseCode() === 200) blob = res.getBlob();
+    else Logger.log('PDF 匯出回應 ' + res.getResponseCode());
+  } catch (e) {
+    Logger.log('PDF 匯出失敗，改用雲端硬碟轉檔：' + e);
+  }
+  try {
+    if (!blob) blob = DriveApp.getFileById(ss.getId()).getAs(MimeType.PDF);
     pdfUrl = folder.createFile(blob.setName(title + '.pdf')).getUrl();
   } catch (e) {
     Logger.log('PDF 產生失敗：' + e);
