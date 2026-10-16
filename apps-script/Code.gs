@@ -16,7 +16,7 @@ var SHEETS = {
     ['org', '學校／單位'], ['name', '聯絡人'], ['phone', '手機'], ['adult', '大人'], ['kid', '小孩'],
     ['tourId', '遊程編號'], ['slot', '抵達時段'], ['quote', '報價'], ['deposit', '訂金'], ['depositPaid', '已收訂金'],
     ['guides', '導覽員'], ['bus', '遊覽車／停車'], ['meal', '用餐'], ['tourNote', '客製行程內容'], ['note', '備註'],
-    ['createdAt', '建立時間'], ['passengers', '旅客名單']
+    ['createdAt', '建立時間'], ['passengers', '旅客名單'], ['source', '來源'], ['lineUser', 'LINE 使用者ID']
   ]},
   guides: { title: '導覽員', cols: [['id', '編號'], ['name', '姓名'], ['note', '備註']] },
   tours: { title: '遊程', cols: [['id', '編號'], ['name', '遊程名稱'], ['meet', '集合地點'], ['content', '遊程內容']] }
@@ -34,6 +34,8 @@ function onOpen() {
     .addSeparator()
     .addItem('產生指定日期的船班名冊', 'manifestMenu')
     .addItem('開啟名冊資料夾', 'openFolderMenu')
+    .addSeparator()
+    .addItem('設定 LINE 機器人', 'lineSetupMenu')
     .addToUi();
 }
 
@@ -44,6 +46,8 @@ function 初始化() {
   if (!p.getProperty('SECRET')) p.setProperty('SECRET', Utilities.getUuid() + Utilities.getUuid());
   Object.keys(SHEETS).forEach(sheetOf);
   settingsSheet();
+  replySheet();
+  lineLogSheet();
   Logger.log('初始化完成。請回到試算表，重新整理後用「接團台」選單設定密碼。');
 }
 
@@ -70,6 +74,7 @@ function doGet() {
 }
 
 function doPost(e) {
+  if (e && e.parameter && e.parameter.line != null) return lineWebhook(e);
   var out;
   try {
     out = handle(JSON.parse(e.postData.contents));
@@ -471,4 +476,188 @@ function showLinks_(title, text, links) {
       return '<p><a href="' + esc(l[1]) + '" target="_blank">' + esc(l[0]) + '</a></p>';
     }).join('') + '</div>';
   SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(360).setHeight(180), title);
+}
+
+/* ---------- LINE 機器人：自動回覆、收預約詢問建立團單 ---------- */
+// 客人傳「【蹦火仔 預約詢問】」→ 建立「待確認」團單並回覆已收到。
+// 其他訊息比對「自動回覆」工作表的關鍵字，對到才回；沒對到就不回，留給真人。
+// 所有收到的訊息都記在「LINE 訊息」工作表。
+
+var REPLY_TITLE = '自動回覆';
+var LINE_LOG_TITLE = 'LINE 訊息';
+var INQUIRY_MARK = '【蹦火仔 預約詢問】';
+var FOLLOW_KEY = '（加好友）';
+var BOOKING_PAGE = 'https://a24982268-afk.github.io/fuji268/';
+
+var DEFAULT_REPLIES = [
+  [FOLLOW_KEY, '您好，歡迎來到蹦火仔！\n想預約遊程，請到預約頁填寫後按「用 LINE 傳送」，我們收到會盡快回覆：\n' + BOOKING_PAGE + '\n\n也可以直接傳「價格」「集合地點」「季節」等關鍵字查詢。'],
+  ['價格,價錢,費用,多少錢,收費,票價', '2026 遊程價格（全票／7–12 歲／6 歲以下）：\n・陸上漁村導覽 $650／$500／$350\n・海上蹦火導覽 $1,800／$1,400／$900\n・海陸雙響蹦 $2,300／$1,800／$1,150\n公司客製行程請直接告訴我們需求。'],
+  ['集合,地點,在哪,地址,怎麼去', '在煮飯間集合。陸上與海陸遊程 14:20 集合，海上遊程 16:20 集合。'],
+  ['多久,時數,幾個小時', '陸上約 2.5 小時，海上約 4.5 小時，海陸雙響蹦約 6.5 小時。'],
+  ['季節,幾月,期間,開放,四季', '陸上漁村導覽全年皆有。海上蹦火導覽與海陸雙響蹦為季節限定，2026 年期間是 5/9 至 9/27。'],
+  ['包團', '平日皆可包團，請到預約頁填寫日期與人數後傳給我們：\n' + BOOKING_PAGE],
+  ['天氣,下雨,颱風,海況', '為了安全，本公司保有依情況調整行程的權利與義務。實際安排會在確認時與您說明。'],
+  ['預約,報名,訂位,怎麼訂,想訂', '請到預約頁填寫，最後按「用 LINE 傳送」，我們收到會盡快回覆確認：\n' + BOOKING_PAGE],
+  ['電話,客服', '富吉漁創有限公司 電話：0955-058-522']
+];
+
+function replySheet() {
+  var ss = book(), sh = ss.getSheetByName(REPLY_TITLE);
+  if (!sh) {
+    sh = ss.insertSheet(REPLY_TITLE);
+    sh.getRange(1, 1, 1, 2).setValues([['關鍵字（用逗號分開，對到任一個就回）', '回覆內容（留空＝不回）']]).setFontWeight('bold');
+    sh.getRange(2, 1, DEFAULT_REPLIES.length, 2).setNumberFormat('@').setValues(DEFAULT_REPLIES).setWrap(true);
+    sh.setColumnWidth(1, 220); sh.setColumnWidth(2, 420);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function lineLogSheet() {
+  var ss = book(), sh = ss.getSheetByName(LINE_LOG_TITLE);
+  if (!sh) {
+    sh = ss.insertSheet(LINE_LOG_TITLE);
+    sh.getRange(1, 1, sh.getMaxRows(), 5).setNumberFormat('@');
+    sh.getRange(1, 1, 1, 5).setValues([['時間', 'LINE 名稱', 'LINE 使用者ID', '訊息', '機器人處理']]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function lineSetupMenu() {
+  var ui = SpreadsheetApp.getUi(), p = PropertiesService.getScriptProperties();
+  var r = ui.prompt('設定 LINE 機器人', '貼上 LINE Developers 的 Channel access token（長期）。\n留空直接按確定＝只重新顯示 Webhook 網址。', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  初始化();
+  var tok = r.getResponseText().trim();
+  if (tok) p.setProperty('LINE_TOKEN', tok);
+  if (!p.getProperty('LINE_TOKEN')) { ui.alert('還沒有 Channel access token，機器人無法回覆。'); return; }
+  if (!p.getProperty('LINE_KEY')) p.setProperty('LINE_KEY', Utilities.getUuid().replace(/-/g, ''));
+  var url = ScriptApp.getService().getUrl();
+  var key = '?line=' + p.getProperty('LINE_KEY');
+  ui.alert('LINE 機器人已設定',
+    '請把下面的網址貼到 LINE Developers →「Messaging API」→「Webhook URL」，並開啟「Use webhook」：\n\n' +
+    (url ? url + key : '（網頁應用程式網址）' + key + '\n\n找不到網址時：「部署」→「管理部署作業」複製網頁應用程式網址，後面接上 ' + key) +
+    '\n\n這串網址等同機器人的鑰匙，不要公開。', ui.ButtonSet.OK);
+}
+
+function lineWebhook(e) {
+  var p = PropertiesService.getScriptProperties();
+  var key = p.getProperty('LINE_KEY');
+  // Apps Script 讀不到 LINE 的簽章標頭，改用網址上的密鑰確認是 LINE 打來的
+  if (key && e.parameter.line === key) {
+    var events = [];
+    try { events = JSON.parse(e.postData.contents).events || []; } catch (err) {}
+    events.forEach(function (ev) {
+      try { lineEvent_(ev); } catch (err) { console.error('LINE 事件處理失敗', err); }
+    });
+  }
+  return ContentService.createTextOutput('ok');
+}
+
+function lineEvent_(ev) {
+  if (ev.type === 'follow') {
+    var w = matchReply_(FOLLOW_KEY, true);
+    if (w) lineReply_(ev.replyToken, w.text);
+    return;
+  }
+  if (ev.type !== 'message' || !ev.message || ev.message.type !== 'text') return;
+  // LINE 重送同一則訊息時不要重複建團單
+  var cache = CacheService.getScriptCache(), seen = 'ev_' + (ev.webhookEventId || ev.message.id);
+  if (cache.get(seen)) return;
+  cache.put(seen, '1', 21600);
+
+  var text = String(ev.message.text || ''), uid = (ev.source && ev.source.userId) || '';
+  var name = lineName_(uid), handled = '';
+  if (text.indexOf(INQUIRY_MARK) >= 0) {
+    var b = parseInquiry_(text);
+    b.status = '待確認'; b.depositPaid = false; b.guides = []; b.createdAt = Date.now();
+    b.source = 'LINE'; b.lineUser = uid;
+    if (name) b.note = 'LINE 名稱：' + name + (b.note ? '\n' + b.note : '');
+    var id = newId(), lock = LockService.getScriptLock();
+    lock.waitLock(20000);
+    try { putRow('bookings', id, b, false); SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
+    var n = (+b.adult || 0) + (+b.kid || 0);
+    lineReply_(ev.replyToken, (b.name || name || '您') + '您好，這裡是蹦火仔，已收到您' +
+      (b.date ? ' ' + Utilities.formatDate(new Date(b.date + 'T00:00:00+08:00'), TZ, 'M/d') + ' ' : '') +
+      '的預約詢問' + (n ? '（共 ' + n + ' 位）' : '') + '。我們確認導覽員後會盡快回覆您，謝謝！');
+    handled = '建立待確認團單';
+  } else {
+    var m = matchReply_(text, false);
+    if (m) { lineReply_(ev.replyToken, m.text); handled = '自動回覆：' + m.key; }
+  }
+  var safeText = text.slice(0, 5000);
+  lineLogSheet().appendRow([Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm:ss'), name, uid,
+    safeText.charAt(0) === '=' ? ' ' + safeText : safeText, handled]);
+}
+
+// 回傳第一列對到的 {key, text}；exact=true 時關鍵字要完全相同（給「（加好友）」用）
+function matchReply_(text, exact) {
+  var rows = replySheet().getDataRange().getDisplayValues().slice(1);
+  for (var i = 0; i < rows.length; i++) {
+    var reply = String(rows[i][1] || '').trim();
+    if (!reply) continue;
+    var keys = String(rows[i][0] || '').split(/[,，、]/).map(function (k) { return k.trim(); }).filter(String);
+    for (var j = 0; j < keys.length; j++) {
+      if (exact ? text === keys[j] : (keys[j] !== FOLLOW_KEY && text.indexOf(keys[j]) >= 0)) return { key: keys[j], text: reply };
+    }
+  }
+  return null;
+}
+
+function lineReply_(token, text) {
+  var tok = PropertiesService.getScriptProperties().getProperty('LINE_TOKEN');
+  if (!tok || !token) return;
+  var res = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/reply', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + tok },
+    payload: JSON.stringify({ replyToken: token, messages: [{ type: 'text', text: String(text).slice(0, 5000) }] })
+  });
+  if (res.getResponseCode() !== 200) console.error('LINE 回覆失敗', res.getResponseCode(), res.getContentText());
+}
+
+function lineName_(uid) {
+  if (!uid) return '';
+  var cache = CacheService.getScriptCache(), k = 'name_' + uid, hit = cache.get(k);
+  if (hit != null) return hit;
+  var tok = PropertiesService.getScriptProperties().getProperty('LINE_TOKEN'), name = '';
+  if (tok) {
+    var res = UrlFetchApp.fetch('https://api.line.me/v2/bot/profile/' + encodeURIComponent(uid),
+      { headers: { Authorization: 'Bearer ' + tok }, muteHttpExceptions: true });
+    if (res.getResponseCode() === 200) name = JSON.parse(res.getContentText()).displayName || '';
+  }
+  cache.put(k, name, 21600);
+  return name;
+}
+
+// 跟接團台網頁「貼上預約內容」用同一套規則
+function parseInquiry_(txt) {
+  var o = {}, notes = [];
+  txt.split(/\r?\n/).forEach(function (line) {
+    var i = line.search(/[：:]/);
+    if (i < 0) return;
+    var k = line.slice(0, i).trim(), v = line.slice(i + 1).trim();
+    if (k === '類型' && /散客|學校|公司團體/.test(v)) o.type = v.match(/散客|學校|公司團體/)[0];
+    else if (k === '學校' || k === '單位') o.org = v;
+    else if (k === '聯絡人' && v.indexOf('（未填）') < 0) o.name = v;
+    else if (k === '手機' && v.indexOf('（未填）') < 0) o.phone = v;
+    else if (k === '首選日期') { var m = v.match(/(\d{4})\/(\d{2})\/(\d{2})/); if (m) o.date = m[1] + '-' + m[2] + '-' + m[3]; }
+    else if (k === '抵達時段') o.slot = v;
+    else if (k === '人數') {
+      var a = v.match(/(?:全票|大人)\s*(\d+)/), b = v.match(/7[–-]12\s*歲\s*(\d+)/), c = v.match(/6\s*歲以下\s*(\d+)/), kk = v.match(/小孩\s*(\d+)/);
+      if (a) o.adult = +a[1];
+      if (b || c) o.kid = (b ? +b[1] : 0) + (c ? +c[1] : 0); else if (kk) o.kid = +kk[1];
+      if (b || c) notes.push('人數明細：' + v.replace(/，共.*$/, ''));
+    }
+    else if (k === '遊程') {
+      readRows('tours').forEach(function (t) { if (t.name === v) o.tourId = t.id; });
+      if (!o.tourId) notes.push('遊程：' + v);
+    }
+    else if (k === '預估費用') { var q = v.replace(/[^\d]/g, ''); if (q) o.quote = +q; }
+    else if (k === '交通') o.bus = v;
+    else if (k === '用餐') o.meal = v;
+    else if (['備案日期', 'LINE', '年級／班級', '帶隊老師', '單據', '備註'].indexOf(k) >= 0) notes.push(k + '：' + v);
+  });
+  if (notes.length) o.note = notes.join('\n');
+  return o;
 }

@@ -35,3 +35,34 @@
   放在雲端硬碟「蹦火仔船班名冊」資料夾（PDF 可直接列印，另有試算表版）。
 - 同一天的名冊重新產生時，舊檔會移到垃圾桶；直接在試算表版上做的修改不會保留。
 - 也可以在接團台「設定」頁，或試算表「接團台」選單手動產生指定日期的名冊。
+
+## LINE 機器人（自動回覆、收預約建團單）
+
+接上 LINE 官方帳號 @FUJI268 之後：
+
+- 客人從預約頁按「用 LINE 傳送」（或貼上「【蹦火仔 預約詢問】」）→ 自動建立「待確認」團單，
+  卡片上會標「LINE」，並回覆客人「已收到您 M/D 的預約詢問」。
+- 其他訊息比對試算表「自動回覆」工作表的關鍵字，對到就回固定內容；沒對到就不回，留給真人在 LINE 聊天室回。
+- 有人加好友時，回覆「（加好友）」那一列的歡迎訊息。
+- 每一則收到的訊息都記在「LINE 訊息」工作表（時間、LINE 名稱、內容、機器人怎麼處理）。
+
+`自動回覆` 工作表可以直接改：A 欄關鍵字用逗號分開，B 欄是回覆內容，B 欄留空＝那列不回。
+由上往下找，第一個對到的就用。預設內容裡的預約頁網址是 `https://a24982268-afk.github.io/fuji268/`，網址不同請直接改。
+
+### 第一次設定
+
+1. 先照上面把 `Code.gs` 更新到最新版，並「管理部署作業」→ 編輯 →「新版本」→「部署」。
+2. 到 LINE Official Account Manager（https://manager.line.biz）→ 選 @FUJI268 →「設定」→「Messaging API」→「啟用 Messaging API」，
+   依畫面建立或選一個 Provider。
+3. 到 LINE Developers（https://developers.line.biz/console/）→ 剛才的 Provider → 這個 Channel →「Messaging API」分頁：
+   最下面「Channel access token (long-lived)」按「Issue」，複製。
+4. 試算表上方選單「接團台」→「設定 LINE 機器人」→ 貼上 token →「確定」。畫面會顯示一串 Webhook 網址（結尾有 `?line=…`），複製。
+5. 回到 LINE Developers「Messaging API」分頁 →「Webhook URL」→「Edit」貼上 →「Update」，打開「Use webhook」。
+   （按「Verify」可能顯示錯誤，這是 Google 轉址造成的，不影響實際收訊息。請用手機傳「價格」給官方帳號測試。）
+6. 回到 LINE Official Account Manager →「設定」→「回應設定」：
+   「聊天」保持開啟（真人還能回）、「Webhook」開啟，「自動回應訊息」關閉（不然會跟機器人重複回覆）。
+
+Webhook 網址裡的 `?line=…` 等同機器人的鑰匙，不要公開；外洩時到 Apps Script「專案設定」→「指令碼屬性」刪掉 `LINE_KEY`，
+再執行一次「設定 LINE 機器人」產生新網址並貼回 LINE Developers。
+
+免費方案每月可主動推播的則數有限，但機器人用的是「回覆」，不算在推播額度內。

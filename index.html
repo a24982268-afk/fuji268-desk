@@ -574,7 +574,7 @@ textarea{min-height:74px;resize:vertical}
       var t=tourOf(r);if(t)m.appendChild(el("span",null,"遊程："+t.name));
       left.appendChild(m);h.appendChild(left);
       var pl=el("div");pl.style.cssText="display:flex;flex-direction:column;gap:6px;align-items:flex-end";
-      pl.appendChild(el("span","pill s-"+r.status,r.status));pl.appendChild(el("span","pill",r.type||"散客"));
+      pl.appendChild(el("span","pill s-"+r.status,r.status));pl.appendChild(el("span","pill",r.type||"散客"));if(r.source)pl.appendChild(el("span","pill",r.source));
       h.appendChild(pl);c.appendChild(h);
 
       var n=need(r),g=gl(r);
