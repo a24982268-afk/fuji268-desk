@@ -183,6 +183,19 @@ textarea{min-height:74px;resize:vertical}
       <div class="acts"><button class="primary" type="submit" id="mBtn">產生名冊</button><span class="msg" id="mMsg" role="status"></span></div>
       <div class="acts" id="mLinks"></div>
     </form>
+    <form class="card" id="xForm">
+      <p class="sec">匯出遊客資訊（Excel）</p>
+      <p class="msg" style="margin:0">把團單整理成 Excel：「彙整」頁依日期＋旅遊項目加總人數，「明細」頁一團一列。日期不填就是全部。</p>
+      <div class="grid">
+        <label>從<input id="xFrom" type="date"></label>
+        <label>到<input id="xTo" type="date"></label>
+      </div>
+      <label>包含哪些團<select id="xScope">
+        <option value="done">已成單（含已完成）</option>
+        <option value="all">全部（含待確認，不含取消）</option>
+      </select></label>
+      <div class="acts"><button class="primary" type="submit">下載 Excel</button><span class="msg" id="xMsg" role="status"></span></div>
+    </form>
     <div class="card">
       <p class="sec">這支手機</p>
       <p class="msg" style="margin:0">登出後要重新輸入密碼才能看到資料。手機遺失或同事離職時，請店家到 Google 試算表的「接團台」選單更改密碼或讓所有裝置重新登入。</p>
@@ -800,6 +813,96 @@ textarea{min-height:74px;resize:vertical}
       $("mMsg").className="msg err";$("mMsg").textContent="產生失敗："+(err&&err.code==="unavailable"?"網路不穩":(err&&err.message)||"請確認後端已更新")+"，請稍後再試。";
     }).then(function(){$("mBtn").disabled=false});
   });
+  /* 匯出 Excel：在手機上直接產生 .xlsx，不經過後端 */
+  function tourLabel(r){var t=tourOf(r);return t?t.name:(r.tourNote?"客製行程":"未選遊程")}
+  function xmlEsc(s){
+    return String(s==null?"":s).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,"")
+      .replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]});
+  }
+  function serial(s){var p=s.split("-");return Math.round((Date.UTC(+p[0],+p[1]-1,+p[2])-Date.UTC(1899,11,30))/864e5)}
+  // 儲存格：數字、{d:"yyyy-mm-dd"} 日期、其他當文字；style 1 = 日期、2 = 粗體
+  function sheetXml(rows,widths){
+    var cols="<cols>"+widths.map(function(w,i){return '<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>'}).join("")+"</cols>";
+    var body=rows.map(function(row,ri){
+      var bold=ri===0||row.bold;
+      return '<row r="'+(ri+1)+'">'+(row.cells||row).map(function(v,ci){
+        var ref=String.fromCharCode(65+ci)+(ri+1),st=bold?' s="2"':"";
+        if(v&&v.d&&/^\d{4}-\d{2}-\d{2}$/.test(v.d))return '<c r="'+ref+'" s="1"><v>'+serial(v.d)+"</v></c>";
+        if(v&&v.d!=null)v=v.d||"日期未定";
+        if(typeof v==="number")return '<c r="'+ref+'"'+st+"><v>"+v+"</v></c>";
+        return '<c r="'+ref+'" t="inlineStr"'+st+'><is><t xml:space="preserve">'+xmlEsc(v)+"</t></is></c>";
+      }).join("")+"</row>";
+    }).join("");
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'+
+      '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'+
+      cols+"<sheetData>"+body+"</sheetData></worksheet>";
+  }
+  var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
+  function crc32(b){var c=0xFFFFFFFF;for(var i=0;i<b.length;i++)c=CRC[(c^b[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0}
+  // 不壓縮的 zip（xlsx 本身就是 zip）
+  function zip(files){
+    var enc=new TextEncoder(),parts=[],central=[],off=0;
+    function u16(n){return [n&255,(n>>>8)&255]}
+    function u32(n){return [n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255]}
+    files.forEach(function(f){
+      var name=enc.encode(f[0]),data=enc.encode(f[1]),crc=crc32(data);
+      var common=[].concat(u16(20),u16(0x0800),u16(0),u16(0),u16(0x21),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0));
+      var local=new Uint8Array([0x50,0x4B,0x03,0x04].concat(common));
+      parts.push(local,name,data);
+      central.push(new Uint8Array([0x50,0x4B,0x01,0x02].concat(u16(20),common,u16(0),u16(0),u16(0),u32(0),u32(off))),name);
+      off+=local.length+name.length+data.length;
+    });
+    var size=central.reduce(function(a,b){return a+b.length},0);
+    var end=new Uint8Array([0x50,0x4B,0x05,0x06].concat(u16(0),u16(0),u16(files.length),u16(files.length),u32(size),u32(off),u16(0)));
+    return new Blob(parts.concat(central,[end]),{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  }
+  function xlsx(sheets){
+    var ns="http://schemas.openxmlformats.org/",head='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    var files=[
+      ["[Content_Types].xml",head+'<Types xmlns="'+ns+'package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'+
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+
+        sheets.map(function(s,i){return '<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'}).join("")+"</Types>"],
+      ["_rels/.rels",head+'<Relationships xmlns="'+ns+'package/2006/relationships"><Relationship Id="rId1" Type="'+ns+'officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+      ["xl/workbook.xml",head+'<workbook xmlns="'+ns+'spreadsheetml/2006/main" xmlns:r="'+ns+'officeDocument/2006/relationships"><sheets>'+
+        sheets.map(function(s,i){return '<sheet name="'+xmlEsc(s.name)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>'}).join("")+"</sheets></workbook>"],
+      ["xl/_rels/workbook.xml.rels",head+'<Relationships xmlns="'+ns+'package/2006/relationships">'+
+        sheets.map(function(s,i){return '<Relationship Id="rId'+(i+1)+'" Type="'+ns+'officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>'}).join("")+
+        '<Relationship Id="rId'+(sheets.length+1)+'" Type="'+ns+'officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
+      ["xl/styles.xml",head+'<styleSheet xmlns="'+ns+'spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy/m/d"/></numFmts>'+
+        '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'+
+        '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>'+
+        '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'+
+        '<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>']
+    ];
+    sheets.forEach(function(s,i){files.push(["xl/worksheets/sheet"+(i+1)+".xml",sheetXml(s.rows,s.widths)])});
+    return zip(files);
+  }
+  $("xForm").addEventListener("submit",function(e){
+    e.preventDefault();
+    var from=$("xFrom").value,to=$("xTo").value,scope=$("xScope").value;
+    var ok=scope==="all"?function(s){return s!=="取消"}:function(s){return ACTIVE.indexOf(s)>=0||s==="已完成"};
+    var list=bookings.filter(function(r){return ok(r.status)&&(!from||(r.date&&r.date>=from))&&(!to||(r.date&&r.date<=to))});
+    list.sort(function(a,b){return (a.date||"9999").localeCompare(b.date||"9999")||(a.time||"").localeCompare(b.time||"")||(a.createdAt||0)-(b.createdAt||0)});
+    if(!list.length){$("xMsg").className="msg err";$("xMsg").textContent="這個範圍沒有團單。";return}
+    var sum={},keys=[],people=0;
+    list.forEach(function(r){
+      var k=(r.date||"")+"\n"+tourLabel(r);
+      if(!sum[k]){sum[k]={date:r.date||"",tour:tourLabel(r),n:0,groups:0};keys.push(k)}
+      sum[k].n+=total(r);sum[k].groups++;people+=total(r);
+    });
+    var agg=[["日期","人數","旅遊項目","團數"]].concat(keys.map(function(k){var s=sum[k];return [{d:s.date},s.n,s.tour,s.groups]}));
+    agg.push({bold:true,cells:["合計",people,"",list.length]});
+    var detail=[["日期","人數","旅遊項目","大人","小孩","集合時間","團體／聯絡人","類型","狀態"]].concat(list.map(function(r){
+      return [{d:r.date||""},total(r),tourLabel(r),+r.adult||0,+r.kid||0,r.time||"",who(r),r.type||"",r.status||""];
+    }));
+    var blob=xlsx([{name:"彙整",rows:agg,widths:[12,8,24,8]},{name:"明細",rows:detail,widths:[12,8,24,8,8,10,28,10,14]}]);
+    var name="蹦火仔遊客資訊"+(from||to?"_"+(from||"起")+"至"+(to||"今後"):"_"+today())+".xlsx";
+    var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(function(){URL.revokeObjectURL(a.href)},10000);
+    $("xMsg").className="msg";$("xMsg").textContent="已下載：共 "+list.length+" 團、"+people+" 人。";
+  });
+
   $("sForm").addEventListener("submit",function(e){
     e.preventDefault();var n=+$("sPer").value||0;
     $("sMsg").textContent="已儲存";
