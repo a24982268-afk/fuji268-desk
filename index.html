@@ -249,12 +249,31 @@ textarea{min-height:74px;resize:vertical}
   function boatOf(r){for(var i=0;i<boats.length;i++)if(boats[i].id===r.boat)return boats[i];return null}
   function waitH(r){return r.status==="待確認"&&r.createdAt?(Date.now()-r.createdAt)/36e5:0}
   function waitTxt(h){return h>=48?Math.floor(h/24)+" 天":Math.floor(h)+" 小時"}
-  /* 船位：同一天同一艘船、已成單（含已排定／已通知）的總人數 */
+  /* 船位：同一天同一艘船、已成單（含已排定／已通知／已完成）的總人數 */
+  var SEAT=ACTIVE.concat(["已完成"]);
+  function seats(r){return SEAT.indexOf(r.status)>=0}
   function boatLoad(date,boatId,skipId){
-    return bookings.filter(function(o){return o.id!==skipId&&o.date===date&&o.boat===boatId&&ACTIVE.indexOf(o.status)>=0}).reduce(function(a,o){return a+total(o)},0);
+    return bookings.filter(function(o){return o.id!==skipId&&o.date===date&&o.boat===boatId&&seats(o)}).reduce(function(a,o){return a+total(o)},0);
+  }
+  function boatPend(date,boatId){
+    return bookings.filter(function(o){return o.date===date&&o.boat===boatId&&o.status==="待確認"}).reduce(function(a,o){return a+total(o)},0);
+  }
+  function seatTxt(used,cap){return cap?used+"／"+cap+(used>cap?"，超收 "+(used-cap):used===cap?"，已滿":"，剩 "+(cap-used)):used+" 人"}
+  // 當日所有船班：有團排上的船（加上這團的船），列出船位
+  function sailings(r){
+    var box=el("div","acts");box.style.gap="6px";
+    box.appendChild(el("span","msg","當日船班"));
+    var list=boats.filter(function(b){return b.id===r.boat||boatLoad(r.date,b.id,null)||boatPend(r.date,b.id)});
+    list.forEach(function(b){
+      var cap=+b.capacity||0,used=boatLoad(r.date,b.id,null),pend=boatPend(r.date,b.id);
+      var pl=el("span","pill"+(cap&&used>cap?" lack":b.id===r.boat?" okp":""),b.name+" "+seatTxt(used,cap)+(pend?"（另 "+pend+" 人待確認）":""));
+      box.appendChild(pl);
+    });
+    if(!list.length)box.appendChild(el("span","msg","還沒有團排船"));
+    return box;
   }
   function overBy(r){
-    var b=boatOf(r);if(!b||!r.date||!(+b.capacity)||ACTIVE.indexOf(r.status)<0)return -Infinity;
+    var b=boatOf(r);if(!b||!r.date||!(+b.capacity)||!seats(r))return -Infinity;
     return boatLoad(r.date,b.id,r.id)+total(r)-(+b.capacity);
   }
   function wouldOver(r){return overBy(Object.assign({},r,{status:"已成單"}))}
@@ -628,12 +647,13 @@ textarea{min-height:74px;resize:vertical}
     }
     box.appendChild(row);return box;
   }
-  function boatSelect(date,skipId,cur,emptyLabel){
+  // selfN：這團佔的位子，算進目前選的那艘船
+  function boatSelect(date,skipId,cur,emptyLabel,selfN){
     var s=el("select"),o0=el("option",null,emptyLabel);o0.value="";s.appendChild(o0);
     boats.forEach(function(b){
       if(isTmp(b.id))return;
-      var left=date&&+b.capacity?(+b.capacity)-boatLoad(date,b.id,skipId):null;
-      var o=el("option",null,b.name+(left==null?"（"+(b.capacity||"?")+" 人）":left>0?"（剩 "+left+" 位）":"（已滿"+(left<0?"，超收 "+(-left):"")+"）"));
+      var cap=+b.capacity||0,used=boatLoad(date,b.id,skipId)+(b.id===cur?selfN||0:0);
+      var o=el("option",null,b.name+(date?"（當日 "+seatTxt(used,cap)+"）":"（"+(cap||"?")+" 人）"));
       o.value=b.id;s.appendChild(o);
     });
     if(cur&&!boatOf({boat:cur})){var ox=el("option",null,"（已刪除的船）");ox.value=cur;s.appendChild(ox)}
@@ -660,10 +680,7 @@ textarea{min-height:74px;resize:vertical}
       if(r.phone)m.appendChild(el("span",null,r.phone));
       var t=tourOf(r);if(t)m.appendChild(el("span",null,"遊程："+t.name));
       var bt=boatOf(r);
-      if(bt){
-        var used=boatLoad(r.date,bt.id,r.id)+(ACTIVE.indexOf(r.status)>=0?total(r):0),cap=+bt.capacity||0;
-        m.appendChild(el("span",null,"船："+bt.name+(cap?"（當日 "+used+"／"+cap+"）":"")));
-      }
+      if(bt)m.appendChild(el("span",null,"船："+bt.name));
       left.appendChild(m);
       var warn=el("div","acts");warn.style.marginTop="6px";
       var wh=waitH(r);if(wh>=OVERDUE_H)warn.appendChild(el("span","pill lack","已等 "+waitTxt(wh)+" 未回覆"));
@@ -674,6 +691,7 @@ textarea{min-height:74px;resize:vertical}
       var pl=el("div");pl.style.cssText="display:flex;flex-direction:column;gap:6px;align-items:flex-end";
       pl.appendChild(el("span","pill s-"+r.status,r.status));pl.appendChild(el("span","pill",r.type||"散客"));if(r.source)pl.appendChild(el("span","pill",r.source));
       h.appendChild(pl);c.appendChild(h);
+      if(r.date&&boats.length)c.appendChild(sailings(r));
 
       var n=need(r),g=gl(r);
       if(ACTIVE.indexOf(r.status)>=0||g.length){
@@ -697,7 +715,7 @@ textarea{min-height:74px;resize:vertical}
       sel.disabled=!canWrite;sel.onchange=function(){if(capOk(r,{status:sel.value}))upd(r.id,{status:sel.value});else render()};
       acts.appendChild(sel);
       if(boats.length||r.boat){
-        var bs=boatSelect(r.date,r.id,r.boat,"船：未排");bs.setAttribute("aria-label","排船");bs.disabled=!canWrite;
+        var bs=boatSelect(r.date,r.id,r.boat,"船：未排",seats(r)?total(r):0);bs.setAttribute("aria-label","排船");bs.disabled=!canWrite;
         bs.onchange=function(){if(capOk(r,{boat:bs.value}))upd(r.id,{boat:bs.value});else render()};
         acts.appendChild(bs);
       }
