@@ -19,9 +19,11 @@ var SHEETS = {
     ['createdAt', '建立時間'], ['passengers', '旅客名單'], ['source', '來源'], ['lineUser', 'LINE 使用者ID'], ['boat', '船']
   ]},
   guides: { title: '導覽員', cols: [['id', '編號'], ['name', '姓名'], ['note', '備註']] },
-  tours: { title: '遊程', cols: [['id', '編號'], ['name', '遊程名稱'], ['meet', '集合地點'], ['content', '遊程內容']] },
+  tours: { title: '遊程', cols: [['id', '編號'], ['name', '遊程名稱'], ['meet', '集合地點'], ['content', '遊程內容'], ['boat', '搭船']] },
   boats: { title: '船隻', cols: [['id', '編號'], ['name', '船名'], ['capacity', '載客上限']],
-    seed: [['金波羅', 34], ['航海家16號', 45], ['公主268號', 45], ['航海家18號', 42]] }
+    seed: [['金波羅', 34], ['航海家16號', 45], ['公主268號', 45], ['航海家18號', 42]] },
+  // 一天一艘船一列；載客上限留空＝用「船隻」的預設值
+  sailings: { title: '船班', cols: [['id', '編號'], ['date', '日期'], ['boat', '船名'], ['capacity', '當日載客上限'], ['stop', '停航'], ['note', '備註']] }
 };
 var SETTINGS_TITLE = '設定';
 var SETTINGS = [['perGuide', '每位導覽員最多帶幾人']];
@@ -71,8 +73,47 @@ function logoutAllMenu() {
 
 /* ---------- 網頁 API ---------- */
 
-function doGet() {
+function doGet(e) {
+  if (e && e.parameter && e.parameter.avail != null) {
+    return ContentService.createTextOutput(JSON.stringify({ ok: true, days: availability_() })).setMimeType(ContentService.MimeType.JSON);
+  }
   return ContentService.createTextOutput('蹦火仔接團台後端運作中');
+}
+
+/* ---------- 預約頁用：未來每天的名額狀態（不含船名與人數） ---------- */
+var SEAT = ['已成單', '導覽員已排定', '已通知導覽員', '已完成'];
+var FEW_SEATS = 10;   // 剩不到幾位顯示「名額有限」
+
+function tourNeedsBoat_(t) {
+  if (!t) return false;
+  if (t.boat === '是') return true;
+  if (t.boat === '否') return false;
+  return /海上|海陸|船/.test(t.name || '');
+}
+
+function availability_() {
+  var cache = CacheService.getScriptCache(), hit = cache.get('avail');
+  if (hit) return JSON.parse(hit);
+  var today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  var boatCap = {}, tours = {}, days = {};
+  readRows('boats').forEach(function (b) { boatCap[b.name] = +b.capacity || 0; });
+  readRows('tours').forEach(function (t) { tours[t.id] = t; });
+  readRows('sailings').forEach(function (s) {
+    if (s.date < today) return;
+    var d = days[s.date] = days[s.date] || { cap: 0, open: 0, stop: 0, used: 0 };
+    if (s.stop) { d.stop++; return; }
+    d.open++; d.cap += +s.capacity || boatCap[s.boat] || 0;
+  });
+  readRows('bookings').forEach(function (b) {
+    if (days[b.date] && SEAT.indexOf(b.status) >= 0 && tourNeedsBoat_(tours[b.tourId])) days[b.date].used += (+b.adult || 0) + (+b.kid || 0);
+  });
+  var out = {};
+  Object.keys(days).forEach(function (k) {
+    var d = days[k], left = d.cap - d.used;
+    out[k] = !d.open ? (d.stop ? 'stop' : 'none') : left <= 0 ? 'full' : left < FEW_SEATS ? 'few' : 'open';
+  });
+  cache.put('avail', JSON.stringify(out), 300);
+  return out;
 }
 
 function doPost(e) {
@@ -120,6 +161,7 @@ function handle(req) {
       }
     }
     SpreadsheetApp.flush();
+    CacheService.getScriptCache().remove('avail');
     return { ok: true, id: id, data: loadAll() };
   } finally {
     lock.releaseLock();
@@ -316,7 +358,7 @@ function writeSettings(d) {
 }
 
 function loadAll() {
-  return { bookings: readRows('bookings'), guides: readRows('guides'), tours: readRows('tours'), boats: readRows('boats'), settings: readSettings() };
+  return { bookings: readRows('bookings'), guides: readRows('guides'), tours: readRows('tours'), boats: readRows('boats'), sailings: readRows('sailings'), settings: readSettings() };
 }
 
 function newId() {
