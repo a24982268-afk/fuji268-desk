@@ -999,3 +999,12 @@ function paxReminders_() {
     }
   });
 }
+
+// 從編輯器執行：第一次會跳出授權（連線到外部服務），並在「執行記錄」顯示官方帳號名稱，確認 token 正確
+function 測試LINE連線() {
+  var tok = PropertiesService.getScriptProperties().getProperty('LINE_TOKEN');
+  if (!tok) { Logger.log('還沒設定 LINE token，請用試算表選單「接團台 → 設定 LINE 機器人」。'); return; }
+  var res = UrlFetchApp.fetch('https://api.line.me/v2/bot/info', { headers: { Authorization: 'Bearer ' + tok }, muteHttpExceptions: true });
+  if (res.getResponseCode() === 200) Logger.log('連線成功：' + JSON.parse(res.getContentText()).displayName);
+  else Logger.log('LINE 回應 ' + res.getResponseCode() + '（token 可能貼錯）：' + res.getContentText());
+}
