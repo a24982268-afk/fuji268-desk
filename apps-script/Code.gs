@@ -598,12 +598,14 @@ function lineSetupMenu() {
   if (tok) p.setProperty('LINE_TOKEN', tok);
   if (!p.getProperty('LINE_TOKEN')) { ui.alert('還沒有 Channel access token，機器人無法回覆。'); return; }
   if (!p.getProperty('LINE_KEY')) p.setProperty('LINE_KEY', Utilities.getUuid().replace(/-/g, ''));
-  var url = ScriptApp.getService().getUrl();
+  // 不用 ScriptApp.getService().getUrl()：它可能給「測試部署」的網址，LINE 打不進去
   var key = '?line=' + p.getProperty('LINE_KEY');
   ui.alert('LINE 機器人已設定',
-    '請把下面的網址貼到 LINE Developers →「Messaging API」→「Webhook URL」，並開啟「Use webhook」：\n\n' +
-    (url ? url + key : '（網頁應用程式網址）' + key + '\n\n找不到網址時：「部署」→「管理部署作業」複製網頁應用程式網址，後面接上 ' + key) +
-    '\n\n這串網址等同機器人的鑰匙，不要公開。', ui.ButtonSet.OK);
+    'Webhook 網址＝接團台在用的網頁應用程式網址＋鑰匙：\n\n' +
+    '1. Apps Script「部署」→「管理部署作業」，複製「進行中」那個部署的網頁應用程式網址（結尾是 /exec）。\n' +
+    '2. 後面直接接上：' + key + '\n' +
+    '3. 貼到 LINE Developers →「Messaging API」→「Webhook URL」，並開啟「Use webhook」。\n\n' +
+    '這串網址等同機器人的鑰匙，不要公開。', ui.ButtonSet.OK);
 }
 
 // 還沒「正式上線」前，機器人只處理測試名單上的 LINE 帳號；其他人的訊息只記錄、不回覆不建單（照舊由真人回）
