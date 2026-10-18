@@ -652,7 +652,15 @@ function lineWebhook(e) {
     var events = [];
     try { events = JSON.parse(e.postData.contents).events || []; } catch (err) {}
     events.forEach(function (ev) {
-      try { lineEvent_(ev); } catch (err) { console.error('LINE 事件處理失敗', err); }
+      try { lineEvent_(ev); } catch (err) {
+        console.error('LINE 事件處理失敗', err);
+        // 錯誤也記在「LINE 訊息」工作表，方便店家直接看到原因
+        try {
+          lineLogSheet().appendRow([Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm:ss'), '',
+            (ev.source && ev.source.userId) || '', (ev.message && ev.message.text) || ev.type || '',
+            ('錯誤：' + (err && err.message || err)).slice(0, 500)]);
+        } catch (e2) {}
+      }
     });
   }
   return ContentService.createTextOutput('ok');
