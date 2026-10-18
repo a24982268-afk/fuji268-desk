@@ -75,6 +75,8 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .boatrow.stopped{border-color:var(--bad);background:var(--bad-soft)}
 .boatrow.stopped .ghost{text-decoration:line-through}
 .boatrow.stopped .acts .ghost:last-child{text-decoration:none}
+.item h3 .code{font-size:13px;font-weight:500;color:var(--muted);margin-left:4px}
+.inbox.unread .note{background:var(--bad-soft)}
 .note.lackn{background:var(--bad-soft);color:var(--bad);font-weight:700}
 .note{background:var(--bg);border-radius:8px;padding:8px 10px;font-size:14px;white-space:pre-wrap;word-break:break-word;margin:0}
 .acts{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -480,7 +482,7 @@ textarea{min-height:74px;resize:vertical}
   function replies(r){
     var g=(r.name||"您")+"您好，";
     return [
-      ["確認收到",g+"這裡是蹦火仔，已收到您 "+md(r.date)+" 的預約詢問（共 "+total(r)+" 位）。我們確認導覽員後會盡快回覆您，謝謝！"],
+      ["確認收到",g+"這裡是蹦火仔，已收到您 "+md(r.date)+" 的預約詢問（共 "+total(r)+" 位）"+(r.code?"，團號 "+r.code:"")+"。我們確認導覽員後會盡快回覆您，謝謝！"],
       ["確認成功",g+"蹦火仔已為您安排 "+md(r.date)+(r.time?" "+r.time+" 集合":"")+"，共 "+total(r)+" 位。若人數或時間有變動，請提前告知我們，謝謝！"],
       ["補問細節",g+"想再跟您確認幾個細節：抵達時間、實際人數、用餐與交通方式，以及是否有行動不便或特殊需求。方便的話請直接回覆，謝謝！"],
       ["日期客滿",g+"很抱歉，"+md(r.date)+" 已無法安排。請問是否可以改到其他日期？我們幫您看看可行的時段。"],
@@ -497,7 +499,7 @@ textarea{min-height:74px;resize:vertical}
     L.push("人數："+total(r)+" 位");
     if(t&&t.content)L.push("\n行程內容：\n"+t.content);
     if(r.tourNote)L.push("\n本團安排：\n"+r.tourNote);
-    if(lack>0)L.push("\n另外還需要 "+lack+" 位旅客的姓名、身分證字號（或護照號碼）、出生年月日與電話，以便製作船班名冊，請盡快提供，謝謝！");
+    if(lack>0)L.push("\n另外還需要 "+lack+" 位旅客的姓名、身分證字號（或護照號碼）、出生年月日與電話，以便製作船班名冊，"+(r.paxUrl?"請由此填寫：\n"+r.paxUrl:"請盡快提供，謝謝！"));
     L.push("\n當天請攜帶身分證件。如遇天候因素需要調整行程，我們會再另行通知。期待與您見面！");
     return L.join("\n");
   }
@@ -556,6 +558,13 @@ textarea{min-height:74px;resize:vertical}
   function paxPanel(r){
     var box=el("div","col");
     box.appendChild(el("p","sec","旅客名單（印船班名冊用）"));
+    if(r.paxUrl){
+      var lk=el("div","col");lk.style.gap="6px";
+      lk.appendChild(el("p","msg","請客人自己填：把這個連結傳給客人，客人填完會直接存進來（出發日隔天失效）。"+(r.paxAt?"客人已於 "+r.paxAt+" 填寫。":"")));
+      var msgTxt=(r.name||"您")+"您好，這裡是蹦火仔。麻煩您幫忙填寫 "+md(r.date)+" 行程的旅客資料（印船班名冊用），謝謝！\n"+r.paxUrl;
+      lk.appendChild(tplBox("填寫名單連結",msgTxt,r));
+      box.appendChild(lk);
+    }
     box.appendChild(el("p","msg","一行一位：姓名、身分證字號或護照、出生年月日、電話，用空白或逗號隔開都可以。客人在 LINE 傳來的名單可以整段貼上，一個人分好幾行也可以。"));
     var ta=el("textarea");ta.style.minHeight="140px";ta.setAttribute("aria-label","旅客名單");ta.dataset.pax=r.id;
     ta.value=paxDraft[r.id]!=null?paxDraft[r.id]:paxText(paxOf(r));
@@ -602,12 +611,14 @@ textarea{min-height:74px;resize:vertical}
     var t=today(),end=addDays(t,6);
     var pend=bookings.filter(function(r){return r.status==="待確認"}).length;
     var late=bookings.filter(function(r){return waitH(r)>=OVERDUE_H}).length;
+    var unread=bookings.filter(function(r){return r.unread}).length;
     var toAssign=bookings.filter(function(r){return r.status==="已成單"}).length;
     var week=bookings.filter(function(r){return ACTIVE.indexOf(r.status)>=0&&r.date>=t&&r.date<=end}).reduce(function(a,r){return a+total(r)},0);
     var s=$("stats");s.textContent="";
     [["待確認團單",pend+" 團"],["待排導覽員",toAssign+" 團"],["7 日內帶團",week+" 人"]].forEach(function(x){
       var d=el("div","stat");d.appendChild(el("b",null,x[1]));d.appendChild(el("span",null,x[0]));
       if(x[0]==="待確認團單"&&late)d.appendChild(el("span","lack",late+" 團已超過 "+OVERDUE_H+" 小時"));
+      if(x[0]==="待確認團單"&&unread)d.appendChild(el("span","lack",unread+" 團客人有新訊息"));
       s.appendChild(d)});
     var days=$("days");days.textContent="";
     var by={};
@@ -657,6 +668,27 @@ textarea{min-height:74px;resize:vertical}
     return box;
   }
   var sent={};
+  function confirmBox(r){
+    var box=el("div","col");box.style.gap="6px";
+    box.appendChild(el("p","sec","成單確認卡"));
+    box.appendChild(el("p","msg","傳一張列出日期、集合、人數、費用的卡片給客人，客人按「確認無誤」或「需要修改」會自動記在這張團單，卡片上也有填寫旅客名單的按鈕。"+
+      (r.confirm==="已確認"?"客人已確認。":r.confirm==="已傳送"?"已傳送，還沒按確認。":r.confirm==="要修改"?"客人按了需要修改，請看上方客人訊息。":"")));
+    var key=r.id+"|confirm",row=el("div","acts");
+    var b=el("button","primary",armed==="C"+key?"再按一次確認傳送":(r.confirm?"重新傳送成單確認卡":"傳送成單確認卡"));b.type="button";
+    b.disabled=!canWrite||sent[key]==="傳送中…";
+    b.onclick=function(){
+      if(armed!=="C"+key){armed="C"+key;render();return}
+      armed=null;sent[key]="傳送中…";render();
+      call("lineConfirm",{id:r.id}).then(function(){sent[key]="已傳送確認卡";lastJson="";return refresh()},function(err){
+        if(err&&err.code==="auth")return;
+        sent[key]="沒有傳出去："+(err&&err.code==="unavailable"?"網路不穩":(err&&err.message)||"請稍後再試");
+      }).then(render);
+    };
+    row.appendChild(b);
+    if(sent[key])row.appendChild(el("span","msg"+(/^沒有/.test(sent[key])?" err":""),sent[key]));
+    box.appendChild(row);
+    return box;
+  }
   function tplBox(label,text,r){
     var box=el("div","col");box.style.gap="6px";
     box.appendChild(el("pre","tpl",text));
@@ -683,6 +715,8 @@ textarea{min-height:74px;resize:vertical}
     var L=$("list");L.textContent="";
     var vis=bookings.filter(function(r){return filter==="全部"||r.status===filter});
     vis.sort(function(a,b){
+      var ua=!!a.unread,ub=!!b.unread;
+      if(ua!==ub)return ua?-1:1;
       var la=waitH(a)>=OVERDUE_H,lb=waitH(b)>=OVERDUE_H;
       if(la!==lb)return la?-1:1;
       if(la)return a.createdAt-b.createdAt;
@@ -693,7 +727,7 @@ textarea{min-height:74px;resize:vertical}
     }
     vis.forEach(function(r){
       var c=el("div","card item"),h=el("div","head"),left=el("div");
-      left.appendChild(el("h3",null,who(r)));
+      var h3=el("h3",null,who(r));if(r.code){var cd=el("span","code"," #"+r.code);h3.appendChild(cd)}left.appendChild(h3);
       var m=el("div","meta"),a=el("span");
       a.appendChild(el("b",null,md(r.date)));if(r.time)a.appendChild(document.createTextNode(" "+r.time+" 集合"));m.appendChild(a);
       var p=el("span");p.appendChild(el("b",null,total(r)+" 人"));p.appendChild(document.createTextNode("（大人 "+(+r.adult||0)+"／小孩 "+(+r.kid||0)+"）"));m.appendChild(p);
@@ -701,7 +735,11 @@ textarea{min-height:74px;resize:vertical}
       var t=tourOf(r);if(t)m.appendChild(el("span",null,"遊程："+t.name));
       left.appendChild(m);
       var warn=el("div","acts");warn.style.marginTop="6px";
+      if(r.unread)warn.appendChild(el("span","pill lack","客人有新訊息"));
       var wh=waitH(r);if(wh>=OVERDUE_H)warn.appendChild(el("span","pill lack","已等 "+waitTxt(wh)+" 未回覆"));
+      if(r.confirm==="已確認")warn.appendChild(el("span","pill okp","客人已確認"+(r.confirmAt?" "+r.confirmAt.slice(5):"")));
+      else if(r.confirm==="已傳送")warn.appendChild(el("span","pill","確認卡已傳，待客人確認"));
+      else if(r.confirm==="要修改")warn.appendChild(el("span","pill lack","客人要修改"));
       var pb=problem(r),pw=r.status==="待確認"?problem(Object.assign({},r,{status:"已成單"})):null;
       if(pb)warn.appendChild(el("span","pill lack",pb.msg));
       else if(pw)warn.appendChild(el("span","pill lack","成單會有問題："+pw.msg));
@@ -726,6 +764,17 @@ textarea{min-height:74px;resize:vertical}
       if(r.meal)info.push("用餐："+r.meal);
       if(info.length)c.appendChild(el("p","note",info.join("\n")));
       if(r.note)c.appendChild(el("p","note",r.note));
+      if(r.inbox){
+        var ib=el("div","col inbox"+(r.unread?" unread":""));ib.style.gap="6px";
+        var lines=String(r.inbox).split("\n"),all=open[r.id]==="inboxAll";
+        ib.appendChild(el("p","sec","客人訊息（LINE）"));
+        ib.appendChild(el("p","note",(all?lines:lines.slice(-5)).join("\n")));
+        var ia=el("div","acts");
+        if(lines.length>5){var more=el("button","ghost",all?"只看最近 5 則":"顯示全部 "+lines.length+" 則");more.type="button";more.onclick=function(){open[r.id]=all?null:"inboxAll";render()};ia.appendChild(more)}
+        if(r.unread){var rd=el("button","ghost","標為已處理");rd.type="button";rd.disabled=!canWrite;rd.onclick=function(){upd(r.id,{unread:""})};ia.appendChild(rd)}
+        if(ia.childNodes.length)ib.appendChild(ia);
+        c.appendChild(ib);
+      }
 
       if(isTmp(r.id)){c.appendChild(el("p","msg","儲存中…幾秒後就能排導覽員、編輯。"));L.appendChild(c);return}
       var acts=el("div","acts");
@@ -769,6 +818,7 @@ textarea{min-height:74px;resize:vertical}
       }
       if(o==="reply"){
         if(!r.lineUser)c.appendChild(el("p","msg","這張團單不是從 LINE 機器人來的，請複製後到 LINE 或臉書貼上。"));
+        else c.appendChild(confirmBox(r));
         replies(r).forEach(function(x){c.appendChild(tplBox(x[0],x[1],r))});
       }
       L.appendChild(c);
@@ -982,6 +1032,11 @@ textarea{min-height:74px;resize:vertical}
     if(id){
       var old=bookings.filter(function(r){return r.id===id})[0];
       if(old&&!capOk(old,doc)){$("fMsg").textContent="沒有儲存：會超收，請換船或調整人數";return}
+      // 客人確認過的內容被改了，要重新確認
+      if(old&&old.confirm&&old.confirm!=="要修改"&&["date","time","adult","kid","tourId","quote","deposit"].some(function(k){return String(old[k]||"")!==String(doc[k]||"")})){
+        doc.confirm="";
+        if(old.lineUser)setTimeout(function(){alert("團單內容已修改，客人先前的確認已取消。請到「回覆客人」重新傳送成單確認卡。")},0);
+      }
       p=db.update("bookings",id,doc);
     }
     else{doc.depositPaid=false;doc.guides=[];doc.status="待確認";p=db.add("bookings",doc)}
