@@ -42,6 +42,8 @@ function onOpen() {
     .addItem('開啟名冊資料夾', 'openFolderMenu')
     .addSeparator()
     .addItem('設定 LINE 機器人', 'lineSetupMenu')
+    .addItem('LINE 機器人測試名單', 'lineTestersMenu')
+    .addItem('LINE 機器人正式上線／改回測試', 'lineGoLiveMenu')
     .addToUi();
 }
 
@@ -604,6 +606,42 @@ function lineSetupMenu() {
     '\n\n這串網址等同機器人的鑰匙，不要公開。', ui.ButtonSet.OK);
 }
 
+// 還沒「正式上線」前，機器人只處理測試名單上的 LINE 帳號；其他人的訊息只記錄、不回覆不建單（照舊由真人回）
+function lineLive_() { return PropertiesService.getScriptProperties().getProperty('LINE_LIVE') === '1'; }
+
+function lineTesters_() {
+  return String(PropertiesService.getScriptProperties().getProperty('LINE_TESTERS') || '')
+    .split(/[\s,，、]+/).filter(function (x) { return /^U[0-9a-f]{32}$/.test(x); });
+}
+
+function lineTestersMenu() {
+  var ui = SpreadsheetApp.getUi(), p = PropertiesService.getScriptProperties(), cur = lineTesters_();
+  var r = ui.prompt('LINE 機器人測試名單',
+    '目前：' + (lineLive_() ? '已正式上線，對所有人作用' : '測試中，只對名單上 ' + cur.length + ' 個帳號作用') + '\n\n' +
+    '貼上要測試的 LINE 使用者ID（U 開頭，多個用逗號分開）。先用自己的手機傳一則訊息給官方帳號，' +
+    '再到「LINE 訊息」工作表 C 欄複製自己的ID。\n\n設定名單會讓機器人回到測試模式。', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  var ids = r.getResponseText().split(/[\s,，、]+/).filter(function (x) { return /^U[0-9a-f]{32}$/.test(x); });
+  if (r.getResponseText().trim() && !ids.length) { ui.alert('看不懂這些ID，沒有變更。ID 是 U 開頭、後面 32 個英數字。'); return; }
+  p.setProperty('LINE_TESTERS', ids.join(','));
+  p.deleteProperty('LINE_LIVE');
+  ui.alert('測試模式：機器人只對名單上 ' + ids.length + ' 個帳號作用，其他遊客不受影響。');
+}
+
+function lineGoLiveMenu() {
+  var ui = SpreadsheetApp.getUi(), p = PropertiesService.getScriptProperties();
+  if (lineLive_()) {
+    if (ui.alert('LINE 機器人', '目前已正式上線。要改回測試模式（只對測試名單作用）嗎？', ui.ButtonSet.YES_NO) === ui.Button.YES) {
+      p.deleteProperty('LINE_LIVE'); ui.alert('已改回測試模式。');
+    }
+    return;
+  }
+  if (ui.alert('LINE 機器人正式上線', '上線後，所有遊客傳給官方帳號的訊息都會由機器人處理（自動回覆、建立團單）。\n' +
+    '請先到 LINE 官方帳號後台關閉「自動回應訊息」，避免重複回覆。確定上線嗎？', ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
+  p.setProperty('LINE_LIVE', '1');
+  ui.alert('機器人已正式上線。');
+}
+
 function lineWebhook(e) {
   var p = PropertiesService.getScriptProperties();
   var key = p.getProperty('LINE_KEY');
@@ -619,6 +657,15 @@ function lineWebhook(e) {
 }
 
 function lineEvent_(ev) {
+  var who = (ev.source && ev.source.userId) || '';
+  if (!lineLive_() && lineTesters_().indexOf(who) < 0) {
+    if (ev.type === 'message' && ev.message && ev.message.type === 'text') {
+      var t = String(ev.message.text || '').slice(0, 5000);
+      lineLogSheet().appendRow([Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm:ss'), '', who,
+        t.charAt(0) === '=' ? ' ' + t : t, '測試模式：不處理']);
+    }
+    return;
+  }
   if (ev.type === 'follow') {
     var w = matchReply_(FOLLOW_KEY, true);
     if (w) lineReply_(ev.replyToken, w.text);
