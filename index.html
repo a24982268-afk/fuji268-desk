@@ -1297,14 +1297,14 @@ textarea{min-height:74px;resize:vertical}
     function cell(t,w,o){o=o||{};
       return '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/>'+(o.span?'<w:gridSpan w:val="'+o.span+'"/>':"")+(o.fill?'<w:shd w:val="clear" w:color="auto" w:fill="'+o.fill+'"/>':"")+
         '<w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/>'+(o.center?'<w:jc w:val="center"/>':"")+"</w:pPr>"+run(t,o)+"</w:p></w:tc>"}
-    var tr=function(inner,hdr){return '<w:tr><w:trPr><w:cantSplit/>'+(hdr?"<w:tblHeader/>":"")+'<w:trHeight w:val="400"/></w:trPr>'+inner+"</w:tr>"};
+    var tr=function(inner,hdr,tall){return '<w:tr><w:trPr><w:cantSplit/>'+(hdr?"<w:tblHeader/>":"")+'<w:trHeight w:val="'+(tall?620:400)+'"/></w:trPr>'+inner+"</w:tr>"};
     var b='<w:tblBorders>'+["top","left","bottom","right","insideH","insideV"].map(function(k){return "<w:"+k+' w:val="single" w:sz="4" w:space="0" w:color="999999"/>'}).join("")+"</w:tblBorders>";
     var tbl='<w:tbl><w:tblPr><w:tblW w:w="'+total+'" w:type="dxa"/>'+b+'<w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>'+cols.map(function(c){return '<w:gridCol w:w="'+c[1]+'"/>'}).join("")+"</w:tblGrid>"+
       tr(cols.map(function(c){return cell(c[0],c[1],{b:1,fill:"EEEEEE",center:1})}).join(""),true)+
       rows.map(function(r){
         if(r.group)return tr(cell(r.group,total,{span:cols.length,b:1,fill:"FDE7DC"}));
         if(r.lack)return tr(cell("",cols[0][1])+cell(r.lack,total-cols[0][1],{span:cols.length-1,color:"B42318"}));
-        return tr(r.map(function(v,i){return cell(v,cols[i][1],{center:i===0||cols[i][2]})}).join(""));
+        return tr(r.map(function(v,i){return cell(v,cols[i][1],{center:i===0||cols[i][2]})}).join(""),false,r.blank);
       }).join("")+"</w:tbl>";
     var doc=head+"<w:document "+W+"><w:body>"+para(title,{b:1,sz:32,after:60})+para(sub,{color:"555555",sz:20,after:160})+tbl+
       '<w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="850" w:right="850" w:bottom="850" w:left="850" w:header="425" w:footer="425" w:gutter="0"/></w:sectPr></w:body></w:document>';
@@ -1335,11 +1335,12 @@ textarea{min-height:74px;resize:vertical}
         seq++;
         rows.push(full?[String(seq),p.name||"",p.id||"",p.birth||"",p.phone||""]:[String(seq),p.name||"",(String(p.birth||"").match(/^\d{4}/)||[""])[0],"☐",""]);
       });
-      if(pax.length<n)rows.push({lack:"（尚缺 "+(n-pax.length)+" 位旅客資料）"});
+      // 還沒填的人數留空白列，讓客人當場補寫
+      for(var i=pax.length;i<n;i++){seq++;var e=full?[String(seq),"","","",""]:[String(seq),"","","☐",""];e.blank=true;rows.push(e)}
     });
     var p=d.split("-"),dt=p[0]+"/"+(+p[1])+"/"+(+p[2])+"（"+wd(d)+"）",now=new Date();
     var stamp=now.getFullYear()+"-"+pad(now.getMonth()+1)+"-"+pad(now.getDate())+" "+pad(now.getHours())+":"+pad(now.getMinutes());
-    var sub="共 "+list.length+" 團、"+people+" 人，名單已填 "+listed+" 人　｜　產生時間 "+stamp;
+    var sub="共 "+list.length+" 團、"+people+" 人，名單已填 "+listed+" 人"+(listed<people?"（空白列請當場補寫）":"")+"　｜　產生時間 "+stamp;
     var blob=full?docx("蹦火仔 船班旅客名冊　"+dt,sub,[["序號",800,1],["姓名",2000],["身分證字號／護照",2600],["出生年月日",2000,1],["聯絡電話",2200]],rows)
       :docx("蹦火仔 報到點名表　"+dt,sub,[["序號",800,1],["姓名",3000],["出生年",1600,1],["報到",1200,1],["備註",3000]],rows);
     saveBlob(blob,(full?"蹦火仔船班名冊_":"蹦火仔報到點名表_")+d+".docx");
