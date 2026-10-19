@@ -318,7 +318,7 @@ textarea{min-height:74px;resize:vertical}
   var OVERDUE_H=24;  // 待確認超過幾小時標紅
   var view="bookings",filter="全部",editId=null,editTour=null,armed=null,open={};
   var token=null,authed=false,canWrite=true,seq=0,appliedSeq=0,lastJson="",lastSync=null,pollTimer=null;
-  var WRITES={add:1,update:1,"delete":1,settings:1,saveTemplate:1,saveReplies:1},inflight=0,writesStarted=0,queue=Promise.resolve(),errMsg="";
+  var WRITES={add:1,update:1,"delete":1,settings:1,saveTemplate:1,saveReplies:1,trip:1},inflight=0,writesStarted=0,queue=Promise.resolve(),errMsg="";
   var $=function(id){return document.getElementById(id)};
   function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
   function pad(n){return String(n).padStart(2,"0")}
@@ -424,11 +424,21 @@ textarea{min-height:74px;resize:vertical}
     });
     return chips;
   }
+  // 行程的動作一次送到後端（合併、移出、解散、排導覽員），畫面先立刻更新
+  function leaveLocal(r){r.trip="";if(!gl(r).length&&(r.status==="導覽員已排定"||r.status==="已通知導覽員"))r.status="已成單"}
+  function tripOp(op,extra,local){
+    return write("trip",Object.assign({op:op},extra),function(){
+      local();
+      trips=trips.filter(function(t){return isTmp(t.id)||bookings.some(function(r){return r.trip===t.id})});
+    }).catch(fail);
+  }
   function setTripGuides(t,cur){
-    db.update("trips",t.id,{guides:cur}).catch(fail);
-    tripMembers(t).forEach(function(r){
-      if(cur.length&&r.status==="已成單")upd(r.id,{status:"導覽員已排定"});
-      if(!cur.length&&(r.status==="導覽員已排定"||r.status==="已通知導覽員"))upd(r.id,{status:"已成單"});
+    tripOp("guides",{tripId:t.id,guides:cur},function(){
+      t.guides=cur;
+      tripMembers(t).forEach(function(r){
+        if(cur.length&&r.status==="已成單")r.status="導覽員已排定";
+        if(!cur.length&&(r.status==="導覽員已排定"||r.status==="已通知導覽員"))r.status="已成單";
+      });
     });
   }
   function tripNotice(t){
@@ -1105,10 +1115,10 @@ textarea{min-height:74px;resize:vertical}
         var h=el("h4"),nm=el("input");nm.type="text";nm.value=t.name||"";nm.placeholder=tripName(t);nm.setAttribute("aria-label","行程名稱");nm.style.flex="1 1 180px";nm.style.fontWeight="700";
         nm.disabled=!canWrite||isTmp(t.id);nm.onchange=function(){db.update("trips",t.id,{name:nm.value.trim()}).catch(fail)};
         h.appendChild(nm);h.appendChild(el("span","pill "+(ok?"okp":"lack"),tripPeople(t)+" 人・導覽員 "+g.length+"／需 "+n+" 位"));box.appendChild(h);
-        if(!m.length)box.appendChild(el("p","msg","這個行程沒有團單了，可以解散。"));
+        if(!m.length&&!isTmp(t.id))box.appendChild(el("p","msg","這個行程沒有團單了，可以解散。"));
         m.forEach(function(r){
           var out=el("button","ghost small","移出");out.type="button";out.disabled=!canWrite;
-          out.onclick=function(){upd(r.id,{trip:""})};
+          out.onclick=function(){tripOp("leave",{ids:[r.id]},function(){leaveLocal(r)})};
           var row=memberRow(r);row.appendChild(out);box.appendChild(row);
         });
         var br=el("div","acts"),bs=el("select");bs.setAttribute("aria-label","行程搭的船");
@@ -1117,13 +1127,13 @@ textarea{min-height:74px;resize:vertical}
         names.forEach(function(b){var o=el("option",null,"搭 "+b);o.value=b;bs.appendChild(o)});
         bs.value=t.boat||"";bs.disabled=!canWrite||isTmp(t.id);bs.onchange=function(){db.update("trips",t.id,{boat:bs.value}).catch(fail)};
         br.appendChild(bs);box.appendChild(br);
-        if(!isTmp(t.id))box.appendChild(guideChips(aDay,g,"t:"+t.id,function(cur){setTripGuides(t,cur)}));
+        if(isTmp(t.id))box.appendChild(el("p","msg","建立中，幾秒後就能排導覽員…"));
+        else box.appendChild(guideChips(aDay,g,"t:"+t.id,function(cur){setTripGuides(t,cur)}));
         var ac=el("div","acts");
         if(m.length){var txt=tripNotice(t);all.push(txt);var cp=el("button","ghost","複製帶團通知");cp.type="button";cp.onclick=function(){copy(txt,cp)};ac.appendChild(cp)}
         var k="T"+t.id,dis=el("button","ghost danger",armed===k?"再按一次確認解散":"解散行程");dis.type="button";dis.disabled=!canWrite||isTmp(t.id);
         dis.onclick=function(){if(armed!==k){armed=k;render();return}armed=null;
-          bookings.filter(function(r){return r.trip===t.id}).forEach(function(r){upd(r.id,{trip:""})});
-          db.remove("trips",t.id).catch(fail)};
+          tripOp("dissolve",{tripId:t.id},function(){bookings.forEach(function(r){if(r.trip===t.id)leaveLocal(r)})})};
         ac.appendChild(dis);box.appendChild(ac);
         tc.appendChild(box);
       });
@@ -1155,10 +1165,11 @@ textarea{min-height:74px;resize:vertical}
       var ids=Object.keys(aSel),bar=el("div","acts");
       var mk=el("button","primary","合併成新行程"+(ids.length?"（"+ids.length+" 團）":""));mk.type="button";mk.disabled=!canWrite||!ids.length;
       mk.onclick=function(){
-        var pick=ids.slice();aSel={};
-        db.add("trips",{date:aDay,name:"",boat:"",guides:[]}).then(function(res){
-          if(res&&res.id)pick.forEach(function(id){upd(id,{trip:res.id})});
-        }).catch(fail);
+        var pick=ids.slice(),tmp=tmpId(),d=aDay;aSel={};
+        tripOp("merge",{date:d,ids:pick},function(){
+          trips.push({id:tmp,date:d,name:"",boat:"",guides:[]});
+          bookings.forEach(function(r){if(pick.indexOf(r.id)>=0)r.trip=tmp});
+        });
       };
       bar.appendChild(mk);
       var real=tripsOn(aDay).filter(function(t){return !isTmp(t.id)});
@@ -1166,7 +1177,8 @@ textarea{min-height:74px;resize:vertical}
         var js=el("select");js.setAttribute("aria-label","加入既有行程");js.disabled=!canWrite||!ids.length;
         var j0=el("option",null,"加入既有行程…");j0.value="";js.appendChild(j0);
         real.forEach(function(t){var o=el("option",null,tripName(t));o.value=t.id;js.appendChild(o)});
-        js.onchange=function(){if(!js.value)return;var tid=js.value,pick=ids.slice();aSel={};pick.forEach(function(id){upd(id,{trip:tid})})};
+        js.onchange=function(){if(!js.value)return;var tid=js.value,pick=ids.slice();aSel={};
+          tripOp("merge",{date:aDay,tripId:tid,ids:pick},function(){bookings.forEach(function(r){if(pick.indexOf(r.id)>=0)r.trip=tid})})};
         bar.appendChild(js);
       }
       uc.appendChild(bar);
