@@ -18,7 +18,7 @@ var SHEETS = {
     ['guides', '導覽員'], ['bus', '遊覽車／停車'], ['meal', '用餐'], ['tourNote', '客製行程內容'], ['note', '備註'],
     ['createdAt', '建立時間'], ['passengers', '旅客名單'], ['source', '來源'], ['lineUser', 'LINE 使用者ID'], ['boat', '船'],
     ['code', '團號'], ['inbox', '客人訊息'], ['unread', '有新訊息'], ['confirm', '客人確認'], ['confirmAt', '確認時間'],
-    ['paxAt', '名單填寫時間'], ['paxReminded', '已提醒填名單'], ['charter', '包團專屬導覽員'], ['trip', '行程']
+    ['paxAt', '名單填寫時間'], ['paxReminded', '已提醒填名單'], ['charter', '包團專屬導覽員'], ['trip', '行程'], ['marks', '進度']
   ]},
   guides: { title: '導覽員', cols: [['id', '編號'], ['name', '姓名'], ['note', '備註'], ['off', '請假日']] },
   tours: { title: '遊程', cols: [['id', '編號'], ['name', '遊程名稱'], ['meet', '集合地點'], ['content', '遊程內容'], ['boat', '搭船']] },
@@ -405,7 +405,22 @@ function newId() {
 
 /* ---------- 船班名冊（出發前自動產生，放在雲端硬碟） ---------- */
 
-var ACTIVE = ['已成單', '導覽員已排定', '已通知導覽員'];
+// 狀態只分 待確認／已成單／取消；「導覽員已排定」「已通知導覽員」「已完成」改成可各自勾選的進度（marks 欄）。
+// 舊資料的狀態可能還是這三個字，視同已成單。
+var ACTIVE = ['已成單', '導覽員已排定', '已通知導覽員', '已完成'];
+var MARKS = ['導覽員已排定', '已通知導覽員', '已完成'];
+function marksOf_(b) {
+  var m = String(b.marks || '').split('、').filter(function (x) { return MARKS.indexOf(x) >= 0; });
+  if (b.status === '已通知導覽員' && m.indexOf('導覽員已排定') < 0) m.push('導覽員已排定');
+  if (MARKS.indexOf(b.status) >= 0 && m.indexOf(b.status) < 0) m.push(b.status);
+  return m;
+}
+// 勾選／取消某個進度，回傳要寫回的 {status, marks}
+function markData_(b, name, on) {
+  var m = marksOf_(b).filter(function (x) { return x !== name; });
+  if (on) m.push(name);
+  return { status: MARKS.indexOf(b.status) >= 0 ? '已成單' : b.status, marks: MARKS.filter(function (x) { return m.indexOf(x) >= 0; }).join('、') };
+}
 var MANIFEST_FOLDER = '蹦火仔船班名冊';
 var MANIFEST_HOUR = 7;   // 每天幾點自動產生
 
@@ -867,7 +882,7 @@ function activeBookingOf_(uid) {
   if (!uid) return null;
   var today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
   var list = readRows('bookings').filter(function (b) {
-    return b.lineUser === uid && b.status !== '取消' && b.status !== '已完成' && (!b.date || b.date >= today);
+    return b.lineUser === uid && b.status !== '取消' && (!b.date || b.date >= today);
   });
   list.sort(function (a, b) { return (a.date || '9999').localeCompare(b.date || '9999') || b.createdAt - a.createdAt; });
   return list[0] || null;
@@ -1163,8 +1178,9 @@ function tripOp_(req) {
     putRow('trips', tid, { guides: g }, true);
     all.forEach(function (b) {
       if (b.trip !== tid) return;
-      if (g.length && b.status === '已成單') putRow('bookings', b.id, { status: '導覽員已排定' }, true);
-      if (!g.length && (b.status === '導覽員已排定' || b.status === '已通知導覽員')) putRow('bookings', b.id, { status: '已成單' }, true);
+      if (ACTIVE.indexOf(b.status) < 0) return;
+      var has = marksOf_(b).indexOf('導覽員已排定') >= 0;
+      if (!!g.length !== has) putRow('bookings', b.id, markData_(b, '導覽員已排定', !!g.length), true);
     });
     return tid;
   } else {
@@ -1181,7 +1197,9 @@ function tripOp_(req) {
 // 離開行程：自己沒排導覽員的團，狀態退回「已成單」
 function leaveData_(b) {
   var d = { trip: '' };
-  if (!(b.guides || []).length && (b.status === '導覽員已排定' || b.status === '已通知導覽員')) d.status = '已成單';
+  if (!(b.guides || []).length && marksOf_(b).indexOf('導覽員已排定') >= 0) {
+    var m = markData_(b, '導覽員已排定', false); d.status = m.status; d.marks = m.marks;
+  }
   return d;
 }
 

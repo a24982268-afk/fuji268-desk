@@ -70,6 +70,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .pill.s-已完成{background:var(--gray-soft);color:var(--muted)}
 .pill.s-取消{background:var(--bad-soft);color:var(--bad)}
 .pill.lack{background:var(--bad-soft);color:var(--bad)}
+.acts.marks .ghost{font-size:13px;padding:5px 10px}
 .pill.okp{background:var(--ok-soft);color:var(--ok)}
 .chk{flex-direction:row;align-items:center;gap:8px}
 .chk input{width:auto}
@@ -310,8 +311,38 @@ textarea{min-height:74px;resize:vertical}
   var TOKEN_KEY="fuji268-desk-token";
   var POLL_MS=15000;
 
-  var STATUS=["待確認","已成單","導覽員已排定","已通知導覽員","已完成","取消"];
-  var ACTIVE=["已成單","導覽員已排定","已通知導覽員"];
+  // 狀態只有 待確認／已成單／取消；其他進度各自勾選（marks 欄）。舊資料的「導覽員已排定」等狀態視同已成單＋該進度
+  var STATUS=["待確認","已成單","取消"];
+  var ACTIVE=["已成單","導覽員已排定","已通知導覽員","已完成"];
+  var MARKS=["導覽員已排定","已通知導覽員","已完成"];
+  var TABS=["全部","待確認","已成單","已完成","取消"];
+  function baseStatus(r){return MARKS.indexOf(r.status)>=0?"已成單":r.status}
+  function marksOf(r){
+    var m=String(r.marks||"").split("、").filter(function(x){return MARKS.indexOf(x)>=0});
+    if(r.status==="已通知導覽員"&&m.indexOf("導覽員已排定")<0)m.push("導覽員已排定");
+    if(MARKS.indexOf(r.status)>=0&&m.indexOf(r.status)<0)m.push(r.status);
+    return m;
+  }
+  function hasMark(r,n){return marksOf(r).indexOf(n)>=0}
+  function markData(r,name,on){
+    var m=marksOf(r).filter(function(x){return x!==name});if(on)m.push(name);
+    return {status:baseStatus(r),marks:MARKS.filter(function(x){return m.indexOf(x)>=0}).join("、")};
+  }
+  function paxDone(r){return total(r)>0&&paxOf(r).length>=total(r)}
+  // 右上角與匯出用：基本狀態＋已勾選的進度＋自動判斷的項目
+  function doneItems(r){
+    var a=marksOf(r).slice();
+    if(r.deposit&&r.depositPaid)a.push("訂金已收");
+    if(paxDone(r))a.push("名單已齊");
+    if(r.confirm==="已確認")a.push("客人已確認");
+    return MARKS.concat(["訂金已收","名單已齊","客人已確認"]).filter(function(x){return a.indexOf(x)>=0});
+  }
+  function inTab(r,tab){
+    if(tab==="全部")return true;
+    if(tab==="已完成")return r.status!=="取消"&&hasMark(r,"已完成");
+    if(tab==="已成單")return baseStatus(r)==="已成單"&&!hasMark(r,"已完成");
+    return baseStatus(r)===tab;
+  }
   var VIEWS=[["bookings","團單"],["sailings","船班"],["visitors","遊客資料"],["guides","導覽員安排"],["tours","遊程"],["settings","設定"]];
   var bookings=[],guides=[],tours=[],boats=[],sailings=[],trips=[],hasTrips=false,aSel={},perGuide=0,sDay=null,aDay=null;
   var hasSail=false;  // 後端還沒更新（沒有船班資料）時，不檢查船位
@@ -335,7 +366,7 @@ textarea{min-height:74px;resize:vertical}
   function waitH(r){return r.status==="待確認"&&r.createdAt?(Date.now()-r.createdAt)/36e5:0}
   function waitTxt(h){return h>=48?Math.floor(h/24)+" 天":Math.floor(h)+" 小時"}
   /* 船位：當天有開、沒停航的船，上限加總；只算要搭船的遊程、已成單（含已排定／已通知／已完成）的人數 */
-  var SEAT=ACTIVE.concat(["已完成"]);
+  var SEAT=ACTIVE;
   function seats(r){return SEAT.indexOf(r.status)>=0}
   function boatTour(t){if(!t)return false;if(t.boat==="是")return true;if(t.boat==="否")return false;return /海上|海陸|船/.test(t.name||"")}
   function needsBoat(r){return boatTour(tourOf(r))}
@@ -425,7 +456,7 @@ textarea{min-height:74px;resize:vertical}
     return chips;
   }
   // 行程的動作一次送到後端（合併、移出、解散、排導覽員），畫面先立刻更新
-  function leaveLocal(r){r.trip="";if(!gl(r).length&&(r.status==="導覽員已排定"||r.status==="已通知導覽員"))r.status="已成單"}
+  function leaveLocal(r){r.trip="";if(!gl(r).length&&hasMark(r,"導覽員已排定"))Object.assign(r,markData(r,"導覽員已排定",false))}
   function tripOp(op,extra,local){
     return write("trip",Object.assign({op:op},extra),function(){
       local();
@@ -436,8 +467,7 @@ textarea{min-height:74px;resize:vertical}
     tripOp("guides",{tripId:t.id,guides:cur},function(){
       t.guides=cur;
       tripMembers(t).forEach(function(r){
-        if(cur.length&&r.status==="已成單")r.status="導覽員已排定";
-        if(!cur.length&&(r.status==="導覽員已排定"||r.status==="已通知導覽員"))r.status="已成單";
+        if(ACTIVE.indexOf(r.status)>=0&&!!cur.length!==hasMark(r,"導覽員已排定"))Object.assign(r,markData(r,"導覽員已排定",!!cur.length));
       });
     });
   }
@@ -905,8 +935,8 @@ textarea{min-height:74px;resize:vertical}
   }
   function renderTabs(){
     var t=$("tabs");t.textContent="";
-    ["全部"].concat(STATUS).forEach(function(s){
-      var n=s==="全部"?bookings.length:bookings.filter(function(r){return r.status===s}).length;
+    TABS.forEach(function(s){
+      var n=bookings.filter(function(r){return inTab(r,s)}).length;
       var b=el("button",null,s+" "+n);b.type="button";b.setAttribute("aria-pressed",s===filter?"true":"false");
       b.onclick=function(){filter=s;render()};t.appendChild(b)});
   }
@@ -915,11 +945,24 @@ textarea{min-height:74px;resize:vertical}
     box.appendChild(el("p","sec","點選導覽員加入或移除"));
     box.appendChild(guideChips(r.date,gl(r),"b:"+r.id,function(cur){
       var data={guides:cur};
-      if(cur.length&&r.status==="已成單")data.status="導覽員已排定";
-      if(!cur.length&&(r.status==="導覽員已排定"||r.status==="已通知導覽員"))data.status="已成單";
+      if(ACTIVE.indexOf(r.status)>=0&&!!cur.length!==hasMark(r,"導覽員已排定"))Object.assign(data,markData(r,"導覽員已排定",!!cur.length));
       upd(r.id,data);
     }));
     return box;
+  }
+  // 進度：每一項各自勾選；名單已齊、客人已確認是自動判斷
+  function markRow(r){
+    var row=el("div","acts marks");
+    MARKS.concat(["訂金已收"]).forEach(function(n){
+      var on=n==="訂金已收"?!!r.depositPaid:hasMark(r,n);
+      var b=el("button","ghost"+(on?" on":""),(on?"☑ ":"☐ ")+n);b.type="button";b.disabled=!canWrite;b.setAttribute("aria-pressed",on?"true":"false");
+      b.onclick=function(){upd(r.id,n==="訂金已收"?{depositPaid:!on}:markData(r,n,!on))};
+      row.appendChild(b);
+    });
+    [["名單已齊",paxDone(r)],["客人已確認",r.confirm==="已確認"]].forEach(function(x){
+      if(x[1])row.appendChild(el("span","pill okp","✓ "+x[0]+"（自動）"));
+    });
+    return row;
   }
   var sent={};
   function confirmBox(r){
@@ -967,7 +1010,8 @@ textarea{min-height:74px;resize:vertical}
   }
   function renderList(){
     var L=$("list");L.textContent="";
-    var vis=bookings.filter(function(r){return filter==="全部"||r.status===filter});
+    if(TABS.indexOf(filter)<0)filter="全部";
+    var vis=bookings.filter(function(r){return inTab(r,filter)});
     vis.sort(function(a,b){
       var ua=!!a.unread,ub=!!b.unread;
       if(ua!==ub)return ua?-1:1;
@@ -991,16 +1035,17 @@ textarea{min-height:74px;resize:vertical}
       var warn=el("div","acts");warn.style.marginTop="6px";
       if(r.unread)warn.appendChild(el("span","pill lack","客人有新訊息"));
       var wh=waitH(r);if(wh>=OVERDUE_H)warn.appendChild(el("span","pill lack","已等 "+waitTxt(wh)+" 未回覆"));
-      if(r.confirm==="已確認")warn.appendChild(el("span","pill okp","客人已確認"+(r.confirmAt?" "+r.confirmAt.slice(5):"")));
-      else if(r.confirm==="已傳送")warn.appendChild(el("span","pill","確認卡已傳，待客人確認"));
+      if(r.confirm==="已傳送")warn.appendChild(el("span","pill","確認卡已傳，待客人確認"));
       else if(r.confirm==="要修改")warn.appendChild(el("span","pill lack","客人要修改"));
       var pb=problem(r),pw=r.status==="待確認"?problem(Object.assign({},r,{status:"已成單"})):null;
       if(pb)warn.appendChild(el("span","pill lack",pb.msg));
       else if(pw)warn.appendChild(el("span","pill lack","成單會有問題："+pw.msg));
       if(warn.childNodes.length)left.appendChild(warn);
       h.appendChild(left);
-      var pl=el("div");pl.style.cssText="display:flex;flex-direction:column;gap:6px;align-items:flex-end";
-      pl.appendChild(el("span","pill s-"+r.status,r.status));pl.appendChild(el("span","pill",r.type||"散客"));if(r.source)pl.appendChild(el("span","pill",r.source));
+      var pl=el("div");pl.style.cssText="display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;align-content:flex-start;max-width:52%";
+      pl.appendChild(el("span","pill s-"+baseStatus(r),baseStatus(r)));
+      doneItems(r).forEach(function(x){pl.appendChild(el("span","pill okp","✓ "+x))});
+      pl.appendChild(el("span","pill",r.type||"散客"));if(r.source)pl.appendChild(el("span","pill",r.source));
       h.appendChild(pl);c.appendChild(h);
       var ds=daySeat(r);if(ds){var dsr=el("div","acts");dsr.appendChild(ds);c.appendChild(dsr)}
 
@@ -1034,9 +1079,10 @@ textarea{min-height:74px;resize:vertical}
       if(isTmp(r.id)){c.appendChild(el("p","msg","儲存中…幾秒後就能排導覽員、編輯。"));L.appendChild(c);return}
       var acts=el("div","acts");
       var sel=el("select");sel.setAttribute("aria-label","變更狀態");
-      STATUS.forEach(function(s){var o=el("option",null,s);o.value=s;if(s===r.status)o.selected=true;sel.appendChild(o)});
-      sel.disabled=!canWrite;sel.onchange=function(){if(capOk(r,{status:sel.value}))upd(r.id,{status:sel.value});else render()};
+      STATUS.forEach(function(s){var o=el("option",null,s);o.value=s;if(s===baseStatus(r))o.selected=true;sel.appendChild(o)});
+      sel.disabled=!canWrite;sel.onchange=function(){if(capOk(r,{status:sel.value}))upd(r.id,{status:sel.value,marks:marksOf(r).join("、")});else render()};
       acts.appendChild(sel);
+      c.appendChild(markRow(r));
       function tog(label,key){
         var b=el("button","ghost"+(open[r.id]===key?" on":""),label);b.type="button";
         b.onclick=function(){open[r.id]=open[r.id]===key?null:key;render()};acts.appendChild(b);
@@ -1046,9 +1092,6 @@ textarea{min-height:74px;resize:vertical}
       tog("旅客名單","pax");
       tog("回覆客人","reply");
       var ed=el("button","ghost","編輯");ed.type="button";ed.disabled=!canWrite;ed.onclick=function(){startEdit(r)};acts.appendChild(ed);
-      if(r.deposit&&!r.depositPaid){
-        var pb=el("button","ghost","標記已收訂金");pb.type="button";pb.disabled=!canWrite;pb.onclick=function(){upd(r.id,{depositPaid:true})};acts.appendChild(pb);
-      }
       var del=el("button","ghost danger",armed===r.id?"再按一次確認刪除":"刪除");del.type="button";del.disabled=!canWrite;
       del.onclick=function(){
         if(armed!==r.id){armed=r.id;render();return}
@@ -1067,8 +1110,8 @@ textarea{min-height:74px;resize:vertical}
       if(o==="pax")c.appendChild(paxPanel(r));
       if(o==="notice"){
         c.appendChild(tplBox("導覽員通知",guideNotice(r)));
-        if(r.status!=="已通知導覽員"&&canWrite){
-          var mk=el("button","ghost","標記已通知導覽員");mk.type="button";mk.style.alignSelf="flex-start";mk.onclick=function(){upd(r.id,{status:"已通知導覽員"})};c.appendChild(mk);
+        if(!hasMark(r,"已通知導覽員")&&canWrite){
+          var mk=el("button","ghost","標記已通知導覽員");mk.type="button";mk.style.alignSelf="flex-start";mk.onclick=function(){upd(r.id,markData(r,"已通知導覽員",true))};c.appendChild(mk);
         }
       }
       if(o==="reply"){
@@ -1115,7 +1158,7 @@ textarea{min-height:74px;resize:vertical}
   function memberRow(r,extra){
     var row=el("div","acts"),t=tourOf(r);row.style.gap="6px";
     if(extra)row.appendChild(extra);
-    row.appendChild(el("span","pill s-"+r.status,r.status));
+    row.appendChild(el("span","pill s-"+baseStatus(r),baseStatus(r)));
     row.appendChild(el("span",null,(r.time?r.time+" ":"")+who(r)+"　"+total(r)+" 人"+(t?"　"+t.name:"")));
     return row;
   }
@@ -1181,8 +1224,7 @@ textarea{min-height:74px;resize:vertical}
       det.open=open[r.id]==="aInd";det.ontoggle=function(){open[r.id]=det.open?"aInd":null};
       det.appendChild(guideChips(aDay,gl(r),"b:"+r.id,function(cur){
         var data={guides:cur};
-        if(cur.length&&r.status==="已成單")data.status="導覽員已排定";
-        if(!cur.length&&(r.status==="導覽員已排定"||r.status==="已通知導覽員"))data.status="已成單";
+        if(ACTIVE.indexOf(r.status)>=0&&!!cur.length!==hasMark(r,"導覽員已排定"))Object.assign(data,markData(r,"導覽員已排定",!!cur.length));
         upd(r.id,data);
       }));
       if(ACTIVE.indexOf(r.status)>=0&&gl(r).length){var txt=guideNotice(r);all.push(txt);var cp=el("button","ghost","複製這團的帶團通知");cp.type="button";cp.style.marginTop="8px";cp.onclick=function(){copy(txt,cp)};det.appendChild(cp)}
@@ -1272,7 +1314,7 @@ textarea{min-height:74px;resize:vertical}
     if(!list.length)D.appendChild(el("p","msg","這天還沒有搭船遊程的團。"));
     else if(c.stop&&(!c.open||used>c.cap))D.appendChild(el("p","msg err","有停航，以下已成單的團可能要通知改期：到「團單」頁 →「回覆客人」→「停航改期」。"));
     list.sort(function(a,b){return (a.time||"").localeCompare(b.time||"")}).forEach(function(r){
-      var row=el("div","acts");row.appendChild(el("span","pill s-"+r.status,r.status));
+      var row=el("div","acts");row.appendChild(el("span","pill s-"+baseStatus(r),baseStatus(r)));
       row.appendChild(el("span",null,who(r)+"　"+total(r)+" 人"+(r.time?"　"+r.time+" 集合":"")));
       D.appendChild(row);
     });
@@ -1626,7 +1668,7 @@ textarea{min-height:74px;resize:vertical}
     var agg=[["日期","人數","旅遊項目","團數"]].concat(keys.map(function(k){var s=sum[k];return [{d:s.date},s.n,s.tour,s.groups]}));
     agg.push({bold:true,cells:["合計",people,"",list.length]});
     var detail=[["日期","人數","旅遊項目","大人","小孩","集合時間","團體／聯絡人","類型","狀態"]].concat(list.map(function(r){
-      return [{d:r.date||""},total(r),tourLabel(r),+r.adult||0,+r.kid||0,r.time||"",who(r),r.type||"",r.status||""];
+      return [{d:r.date||""},total(r),tourLabel(r),+r.adult||0,+r.kid||0,r.time||"",who(r),r.type||"",[baseStatus(r)].concat(doneItems(r)).join("、")];
     }));
     var blob=xlsx([{name:"彙整",rows:agg,widths:[12,8,24,8]},{name:"明細",rows:detail,widths:[12,8,24,8,8,10,28,10,14]}]);
     var name="蹦火仔遊客資訊"+(from||to?"_"+(from||"起")+"至"+(to||"今後"):"_"+today())+".xlsx";
