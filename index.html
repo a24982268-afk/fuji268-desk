@@ -40,8 +40,9 @@ button{font:inherit;cursor:pointer}
 .ghost.warnb{border-color:var(--warn);color:var(--warn)}
 button:disabled{opacity:.5;cursor:default}
 button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--ember);outline-offset:2px}
-.nav{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:5px}
+.nav{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:5px}
 .nav button{border:0;background:transparent;color:var(--muted);font-weight:700;padding:9px 4px;border-radius:8px;min-width:0}
+@media(max-width:520px){.nav{grid-template-columns:repeat(3,1fr)}}
 .nav button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;min-width:0}
@@ -179,6 +180,36 @@ textarea{min-height:74px;resize:vertical}
       <div id="sUp" class="col" style="gap:6px"></div>
     </div>
   </section>
+  <!-- 遊客資料 -->
+  <section id="v-visitors" class="col" hidden>
+    <form class="card" id="mForm">
+      <p class="sec">船班名冊</p>
+      <p class="msg" style="margin:0">每天早上 7 點會自動產生 3 天後所有已成單團的旅客名冊（也會更新 1、2 天後的），放在店家 Google 雲端硬碟的「蹦火仔船班名冊」資料夾，打開 PDF 就能列印。名單臨時有變動，可以在這裡重新產生：</p>
+      <label>日期<input id="mDate" type="date" required></label>
+      <div class="acts"><button class="primary" type="submit" id="mBtn">產生名冊</button><span class="msg" id="mMsg" role="status"></span></div>
+      <div class="acts" id="mLinks"></div>
+      <p class="msg" style="margin:0">下載 Word 檔（可以編輯，直接存到這支手機或電腦）：</p>
+      <div class="acts">
+        <button class="ghost" type="button" id="wFull">下載 Word：完整名冊</button>
+        <button class="ghost" type="button" id="wCheck">下載 Word：報到點名表（無證號）</button>
+        <span class="msg" id="wMsg" role="status"></span>
+      </div>
+      <p class="msg" style="margin:0">報到點名表只有姓名與出生年，沒有身分證字號、生日月日與電話，適合在報到處公開使用。</p>
+    </form>
+    <form class="card" id="xForm">
+      <p class="sec">匯出遊客資訊（Excel）</p>
+      <p class="msg" style="margin:0">把團單整理成 Excel：「彙整」頁依日期＋旅遊項目加總人數，「明細」頁一團一列。日期不填就是全部。</p>
+      <div class="grid">
+        <label>從<input id="xFrom" type="date"></label>
+        <label>到<input id="xTo" type="date"></label>
+      </div>
+      <label>包含哪些團<select id="xScope">
+        <option value="done">已成單（含已完成）</option>
+        <option value="all">全部（含待確認，不含取消）</option>
+      </select></label>
+      <div class="acts"><button class="primary" type="submit">下載 Excel</button><span class="msg" id="xMsg" role="status"></span></div>
+    </form>
+  </section>
   <!-- 導覽員 -->
   <section id="v-guides" class="col" hidden>
     <form class="card" id="gForm" autocomplete="off">
@@ -239,33 +270,6 @@ textarea{min-height:74px;resize:vertical}
       <div id="kwList" class="col" style="gap:8px"></div>
       <div class="acts"><button class="ghost" type="button" id="kwAdd">＋ 新增一列</button><button class="primary" type="button" id="kwSave">儲存關鍵字回覆</button><span class="msg" id="kwMsg" role="status"></span></div>
     </div>
-    <form class="card" id="mForm">
-      <p class="sec">船班名冊</p>
-      <p class="msg" style="margin:0">每天早上 7 點會自動產生 3 天後所有已成單團的旅客名冊（也會更新 1、2 天後的），放在店家 Google 雲端硬碟的「蹦火仔船班名冊」資料夾，打開 PDF 就能列印。名單臨時有變動，可以在這裡重新產生：</p>
-      <label>日期<input id="mDate" type="date" required></label>
-      <div class="acts"><button class="primary" type="submit" id="mBtn">產生名冊</button><span class="msg" id="mMsg" role="status"></span></div>
-      <div class="acts" id="mLinks"></div>
-      <p class="msg" style="margin:0">下載 Word 檔（可以編輯，直接存到這支手機或電腦）：</p>
-      <div class="acts">
-        <button class="ghost" type="button" id="wFull">下載 Word：完整名冊</button>
-        <button class="ghost" type="button" id="wCheck">下載 Word：報到點名表（無證號）</button>
-        <span class="msg" id="wMsg" role="status"></span>
-      </div>
-      <p class="msg" style="margin:0">報到點名表只有姓名與出生年，沒有身分證字號、生日月日與電話，適合在報到處公開使用。</p>
-    </form>
-    <form class="card" id="xForm">
-      <p class="sec">匯出遊客資訊（Excel）</p>
-      <p class="msg" style="margin:0">把團單整理成 Excel：「彙整」頁依日期＋旅遊項目加總人數，「明細」頁一團一列。日期不填就是全部。</p>
-      <div class="grid">
-        <label>從<input id="xFrom" type="date"></label>
-        <label>到<input id="xTo" type="date"></label>
-      </div>
-      <label>包含哪些團<select id="xScope">
-        <option value="done">已成單（含已完成）</option>
-        <option value="all">全部（含待確認，不含取消）</option>
-      </select></label>
-      <div class="acts"><button class="primary" type="submit">下載 Excel</button><span class="msg" id="xMsg" role="status"></span></div>
-    </form>
     <div class="card">
       <p class="sec">這支手機</p>
       <p class="msg" style="margin:0">登出後要重新輸入密碼才能看到資料。手機遺失或同事離職時，請店家到 Google 試算表的「接團台」選單更改密碼或讓所有裝置重新登入。</p>
@@ -283,7 +287,7 @@ textarea{min-height:74px;resize:vertical}
 
   var STATUS=["待確認","已成單","導覽員已排定","已通知導覽員","已完成","取消"];
   var ACTIVE=["已成單","導覽員已排定","已通知導覽員"];
-  var VIEWS=[["bookings","團單"],["sailings","船班"],["guides","導覽員"],["tours","遊程"],["settings","設定"]];
+  var VIEWS=[["bookings","團單"],["sailings","船班"],["visitors","遊客資料"],["guides","導覽員"],["tours","遊程"],["settings","設定"]];
   var bookings=[],guides=[],tours=[],boats=[],sailings=[],perGuide=0,sDay=null;
   var hasSail=false;  // 後端還沒更新（沒有船班資料）時，不檢查船位
   var OVERDUE_H=24;  // 待確認超過幾小時標紅
