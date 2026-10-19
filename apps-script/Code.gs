@@ -159,6 +159,8 @@ function handle(req) {
       saveTemplate_(String(req.code || ''), String(req.text == null ? '' : req.text));
     } else if (req.action === 'saveReplies') {
       saveReplies_(req.rows);
+    } else if (req.action === 'trip') {
+      id = tripOp_(req);
     } else {
       if (!SHEETS[coll]) return { ok: false, code: 'error', message: '未知的資料類別' };
       if (req.action === 'add') {
@@ -1115,4 +1117,52 @@ function saveReplies_(rows) {
   var sh = replySheet(), last = sh.getLastRow();
   if (last > 1) sh.getRange(2, 1, last - 1, 2).clearContent();
   if (clean.length) sh.getRange(2, 1, clean.length, 2).setNumberFormat('@').setValues(clean).setWrap(true);
+}
+
+/* ---------- 行程（合併團單共用導覽員）：一次呼叫做完，避免一張一張存很慢 ---------- */
+function tripOp_(req) {
+  var op = String(req.op || ''), tid = String(req.tripId || ''), ids = Array.isArray(req.ids) ? req.ids.map(String) : [];
+  var all = readRows('bookings'), byId = {};
+  all.forEach(function (b) { byId[b.id] = b; });
+  var date = req.date ? String(req.date) : '';
+  if (op === 'merge') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('日期格式不對');
+    if (!tid) { tid = newId(); putRow('trips', tid, { date: date, name: '', boat: '', guides: [] }, false); }
+    ids.forEach(function (id) { if (byId[id] && byId[id].date === date) { putRow('bookings', id, { trip: tid }, true); byId[id].trip = tid; } });
+  } else if (op === 'leave') {
+    ids.forEach(function (id) { if (byId[id]) { if (!date) date = byId[id].date; putRow('bookings', id, leaveData_(byId[id]), true); byId[id].trip = ''; } });
+  } else if (op === 'dissolve') {
+    all.forEach(function (b) { if (b.trip === tid) { if (!date) date = b.date; putRow('bookings', b.id, leaveData_(b), true); b.trip = ''; } });
+    deleteTrip_(tid);
+    tid = '';
+  } else if (op === 'guides') {
+    var g = (Array.isArray(req.guides) ? req.guides : []).map(String);
+    putRow('trips', tid, { guides: g }, true);
+    all.forEach(function (b) {
+      if (b.trip !== tid) return;
+      if (g.length && b.status === '已成單') putRow('bookings', b.id, { status: '導覽員已排定' }, true);
+      if (!g.length && (b.status === '導覽員已排定' || b.status === '已通知導覽員')) putRow('bookings', b.id, { status: '已成單' }, true);
+    });
+    return tid;
+  } else {
+    throw new Error('未知的行程動作');
+  }
+  // 沒有團單的行程自動刪掉
+  readRows('trips').forEach(function (t) {
+    if (date && t.date !== date) return;
+    if (!all.some(function (b) { return b.trip === t.id; })) deleteTrip_(t.id);
+  });
+  return tid;
+}
+
+// 離開行程：自己沒排導覽員的團，狀態退回「已成單」
+function leaveData_(b) {
+  var d = { trip: '' };
+  if (!(b.guides || []).length && (b.status === '導覽員已排定' || b.status === '已通知導覽員')) d.status = '已成單';
+  return d;
+}
+
+function deleteTrip_(id) {
+  var sh = sheetOf('trips'), r = findRow(sh, id);
+  if (r >= 0) sh.deleteRow(r + 1);
 }
