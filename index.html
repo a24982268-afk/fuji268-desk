@@ -318,7 +318,7 @@ textarea{min-height:74px;resize:vertical}
   var OVERDUE_H=24;  // 待確認超過幾小時標紅
   var view="bookings",filter="全部",editId=null,editTour=null,armed=null,open={};
   var token=null,authed=false,canWrite=true,seq=0,appliedSeq=0,lastJson="",lastSync=null,pollTimer=null;
-  var WRITES={add:1,update:1,"delete":1,settings:1,saveTemplate:1,saveReplies:1,trip:1},inflight=0,writesStarted=0,queue=Promise.resolve(),errMsg="";
+  var WRITES={add:1,update:1,"delete":1,settings:1,saveTemplate:1,saveReplies:1,trip:1,batch:1},inflight=0,writesStarted=0,queue=Promise.resolve(),errMsg="";
   var $=function(id){return document.getElementById(id)};
   function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
   function pad(n){return String(n).padStart(2,"0")}
@@ -475,7 +475,7 @@ textarea{min-height:74px;resize:vertical}
           throw res||{code:"error"};
         }
         // 還有別的修改在排隊、或讀取期間有修改送出時，不要用（可能較舊的）伺服器資料蓋掉畫面
-        var ok=WRITES[action]?inflight===1:(quiet&&!inflight&&writesStarted===w0);
+        var ok=WRITES[action]?inflight===(action==="batch"?extra.ops.length:1):(quiet&&!inflight&&writesStarted===w0);
         if(res.data&&my>appliedSeq&&ok){appliedSeq=my;apply(res.data)}
         return res;
       });
@@ -485,7 +485,7 @@ textarea{min-height:74px;resize:vertical}
     var j=JSON.stringify(d);
     if(j!==lastJson){
       lastJson=j;
-      bookings=d.bookings||[];guides=d.guides||[];tours=d.tours||[];boats=d.boats||[];sailings=d.sailings||[];hasSail=!!d.sailings;trips=d.trips||[];hasTrips=!!d.trips;
+      bookings=d.bookings||[];guides=d.guides||[];tours=d.tours||[];boats=d.boats||[];sailings=d.sailings||[];hasSail=!!d.sailings;useBatch=!!(d.features&&d.features.batch);trips=d.trips||[];hasTrips=!!d.trips;
       perGuide=d.settings&&+d.settings.perGuide>0?+d.settings.perGuide:0;
       templates=d.templates||null;autoReplies=d.autoReplies||null;
       render();
@@ -509,14 +509,41 @@ textarea{min-height:74px;resize:vertical}
   window.addEventListener("beforeunload",function(e){if(inflight){e.preventDefault();e.returnValue=""}});
 
   /* 修改先顯示在畫面上，再依序送到試算表；失敗就還原成試算表上的資料 */
+  /* 連續的修改會在 0.35 秒內合成一包送出，後端一次做完、只讀一次資料 */
+  var useBatch=false,pend=[],flushTimer=null,sending=false;
+  function errText(c){return c==="unavailable"?"網路不穩":c==="not_found"?"資料已被其他人刪除":"伺服器錯誤"}
+  function flush(){
+    flushTimer=null;
+    if(sending||!pend.length)return;
+    sending=true;
+    var batch=pend.splice(0,pend.length);
+    var p=queue.then(function(){return call("batch",{ops:batch.map(function(b){return b.body})})});
+    queue=p.catch(function(){});
+    p.then(function(res){
+      var bad=null;
+      batch.forEach(function(b,i){var r=(res.results||[])[i]||{ok:false,code:"error"};if(r.ok)b.resolve(r);else{bad=r;b.reject(r)}});
+      if(bad){errMsg="剛剛有一筆沒存到（"+(bad.message||errText(bad.code))+"），畫面已還原，請再試一次。";lastJson=""}else errMsg="";
+    },function(err){
+      batch.forEach(function(b){b.reject(err)});
+      if(!(err&&err.code==="auth")){errMsg="剛剛有 "+batch.length+" 筆沒存到（"+errText(err&&err.code)+"），畫面已還原，請再試一次。";lastJson=""}
+    }).then(function(){
+      inflight-=batch.length;sending=false;syncLine();
+      if(pend.length)flush();
+      else if(!inflight&&!lastJson)refresh();
+    });
+  }
   function write(action,extra,local){
     if(local){local();render()}
     inflight++;writesStarted++;syncLine();
+    if(useBatch)return new Promise(function(resolve,reject){
+      pend.push({body:Object.assign({action:action},extra),resolve:resolve,reject:reject});
+      if(!sending&&!flushTimer)flushTimer=setTimeout(flush,350);
+    });
     var p=queue.then(function(){return call(action,extra)});
     queue=p.then(function(){errMsg=""},function(err){
       if(err&&err.code==="auth")return;
       var c=err&&err.code;
-      errMsg="剛剛有一筆沒存到（"+(c==="unavailable"?"網路不穩":c==="not_found"?"資料已被其他人刪除":"伺服器錯誤")+"），畫面已還原，請再試一次。";
+      errMsg="剛剛有一筆沒存到（"+errText(c)+"），畫面已還原，請再試一次。";
       lastJson="";
     }).then(function(){
       inflight--;syncLine();

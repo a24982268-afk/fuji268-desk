@@ -152,38 +152,54 @@ function handle(req) {
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
-    var id = null, coll = req.collection;
-    if (req.action === 'settings') {
-      writeSettings(req.data || {});
-    } else if (req.action === 'saveTemplate') {
-      saveTemplate_(String(req.code || ''), String(req.text == null ? '' : req.text));
-    } else if (req.action === 'saveReplies') {
-      saveReplies_(req.rows);
-    } else if (req.action === 'trip') {
-      id = tripOp_(req);
-    } else {
-      if (!SHEETS[coll]) return { ok: false, code: 'error', message: '未知的資料類別' };
-      if (req.action === 'add') {
-        id = newId();
-        var d = req.data || {};
-        if (coll === 'bookings') { d.createdAt = Date.now(); d.code = nextCode_(); }
-        putRow(coll, id, d, false);
-      } else if (req.action === 'update') {
-        if (findRow(sheetOf(coll), req.id) < 0) return { ok: false, code: 'not_found' };
-        putRow(coll, String(req.id), req.data || {}, true);
-      } else if (req.action === 'delete') {
-        var sh = sheetOf(coll), r = findRow(sh, req.id);
-        if (r >= 0) sh.deleteRow(r + 1);
-      } else {
-        return { ok: false, code: 'error', message: '未知的動作' };
-      }
+    // 一次送來好幾個修改：依序做完，只回傳一次資料（快很多）
+    if (req.action === 'batch') {
+      var results = (Array.isArray(req.ops) ? req.ops : []).slice(0, 200).map(function (op) {
+        try { return writeOp_(op || {}); } catch (err) { return { ok: false, code: 'error', message: String(err && err.message || err) }; }
+      });
+      SpreadsheetApp.flush();
+      CacheService.getScriptCache().remove('avail');
+      return { ok: true, results: results, data: loadAll() };
     }
+    var res = writeOp_(req);
+    if (!res.ok) return res;
     SpreadsheetApp.flush();
     CacheService.getScriptCache().remove('avail');
-    return { ok: true, id: id, data: loadAll() };
+    return { ok: true, id: res.id, data: loadAll() };
   } finally {
     lock.releaseLock();
   }
+}
+
+// 單一個修改（呼叫前要先拿到鎖）
+function writeOp_(req) {
+  var id = null, coll = req.collection;
+  if (req.action === 'settings') {
+    writeSettings(req.data || {});
+  } else if (req.action === 'saveTemplate') {
+    saveTemplate_(String(req.code || ''), String(req.text == null ? '' : req.text));
+  } else if (req.action === 'saveReplies') {
+    saveReplies_(req.rows);
+  } else if (req.action === 'trip') {
+    id = tripOp_(req);
+  } else {
+    if (!SHEETS[coll]) return { ok: false, code: 'error', message: '未知的資料類別' };
+    if (req.action === 'add') {
+      id = newId();
+      var d = req.data || {};
+      if (coll === 'bookings') { d.createdAt = Date.now(); d.code = nextCode_(); }
+      putRow(coll, id, d, false);
+    } else if (req.action === 'update') {
+      if (findRow(sheetOf(coll), req.id) < 0) return { ok: false, code: 'not_found' };
+      putRow(coll, String(req.id), req.data || {}, true);
+    } else if (req.action === 'delete') {
+      var sh = sheetOf(coll), r = findRow(sh, req.id);
+      if (r >= 0) sh.deleteRow(r + 1);
+    } else {
+      return { ok: false, code: 'error', message: '未知的動作' };
+    }
+  }
+  return { ok: true, id: id };
 }
 
 /* ---------- 驗證 ---------- */
@@ -377,9 +393,10 @@ function writeSettings(d) {
 
 function loadAll() {
   var bookings = readRows('bookings');
-  bookings.forEach(function (b) { b.paxUrl = paxUrl_(b.id); });
+  var since = Utilities.formatDate(new Date(Date.now() - 864e5), TZ, 'yyyy-MM-dd');
+  bookings.forEach(function (b) { if (b.status !== '取消' && (!b.date || b.date >= since)) b.paxUrl = paxUrl_(b.id); });
   return { bookings: bookings, guides: readRows('guides'), tours: readRows('tours'), boats: readRows('boats'), sailings: readRows('sailings'), trips: readRows('trips'), settings: readSettings(),
-    templates: templateList_(), autoReplies: replyRows_() };
+    templates: templateList_(), autoReplies: replyRows_(), features: { batch: 1 } };
 }
 
 function newId() {
@@ -946,9 +963,15 @@ function linePostback_(ev) {
 
 var PAX_PAGE = 'https://a24982268-afk.github.io/fuji268/pax.html';
 
+var paxKeyCache_ = null;
 function paxKey_(id) {
-  var p = PropertiesService.getScriptProperties(), k = p.getProperty('PAX_KEY');
-  if (!k) { k = Utilities.getUuid() + Utilities.getUuid(); p.setProperty('PAX_KEY', k); }
+  var k = paxKeyCache_;
+  if (!k) {
+    var p = PropertiesService.getScriptProperties();
+    k = p.getProperty('PAX_KEY');
+    if (!k) { k = Utilities.getUuid() + Utilities.getUuid(); p.setProperty('PAX_KEY', k); }
+    paxKeyCache_ = k;
+  }
   return Utilities.base64EncodeWebSafe(Utilities.computeHmacSha256Signature(String(id), k, Utilities.Charset.UTF_8)).slice(0, 22);
 }
 
