@@ -18,18 +18,18 @@ var SHEETS = {
     ['guides', '導覽員'], ['bus', '遊覽車／停車'], ['meal', '用餐'], ['tourNote', '客製行程內容'], ['note', '備註'],
     ['createdAt', '建立時間'], ['passengers', '旅客名單'], ['source', '來源'], ['lineUser', 'LINE 使用者ID'], ['boat', '船'],
     ['code', '團號'], ['inbox', '客人訊息'], ['unread', '有新訊息'], ['confirm', '客人確認'], ['confirmAt', '確認時間'],
-    ['paxAt', '名單填寫時間'], ['paxReminded', '已提醒填名單']
+    ['paxAt', '名單填寫時間'], ['paxReminded', '已提醒填名單'], ['charter', '包團專屬導覽員']
   ]},
-  guides: { title: '導覽員', cols: [['id', '編號'], ['name', '姓名'], ['note', '備註']] },
+  guides: { title: '導覽員', cols: [['id', '編號'], ['name', '姓名'], ['note', '備註'], ['off', '請假日']] },
   tours: { title: '遊程', cols: [['id', '編號'], ['name', '遊程名稱'], ['meet', '集合地點'], ['content', '遊程內容'], ['boat', '搭船']] },
-  boats: { title: '船隻', cols: [['id', '編號'], ['name', '船名'], ['capacity', '載客上限']],
+  boats: { title: '船隻', cols: [['id', '編號'], ['name', '船名'], ['capacity', '載客上限'], ['guideNeed', '導覽員人數']],
     seed: [['金波羅', 34], ['航海家16號', 45], ['公主268號', 45], ['航海家18號', 42]] },
   // 一天一艘船一列；載客上限留空＝用「船隻」的預設值
-  sailings: { title: '船班', cols: [['id', '編號'], ['date', '日期'], ['boat', '船名'], ['capacity', '當日載客上限'], ['stop', '停航'], ['note', '備註']] }
+  sailings: { title: '船班', cols: [['id', '編號'], ['date', '日期'], ['boat', '船名'], ['capacity', '當日載客上限'], ['stop', '停航'], ['note', '備註'], ['guides', '導覽員']] }
 };
 var SETTINGS_TITLE = '設定';
 var SETTINGS = [['perGuide', '每位導覽員最多帶幾人']];
-var NUM = { adult: 1, kid: 1, quote: 1, deposit: 1, capacity: 1 };
+var NUM = { adult: 1, kid: 1, quote: 1, deposit: 1, capacity: 1, guideNeed: 1 };
 
 /* ---------- 試算表選單與初始化 ---------- */
 

@@ -71,6 +71,13 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .pill.s-取消{background:var(--bad-soft);color:var(--bad)}
 .pill.lack{background:var(--bad-soft);color:var(--bad)}
 .pill.okp{background:var(--ok-soft);color:var(--ok)}
+.chk{flex-direction:row;align-items:center;gap:8px}
+.chk input{width:auto}
+.gbox{border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.gbox.lack{border-color:var(--bad)}
+.gbox.okb{border-color:var(--ok)}
+.gbox h4{margin:0;font-size:15px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center}
+.ghost.offday{opacity:.45;text-decoration:line-through}
 .boatrow{border:1.5px solid var(--line);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:8px}
 .boatrow.open{border-color:var(--ember)}
 .boatrow.stopped{border-color:var(--bad);background:var(--bad-soft)}
@@ -145,6 +152,7 @@ textarea{min-height:74px;resize:vertical}
       </div>
       <label>遊覽車／停車<input id="fBus" placeholder="例：遊覽車 2 輛，10:00 到"></label>
       <label>用餐與飲食禁忌<input id="fMeal" placeholder="例：素食 3 份、花生過敏 1 位"></label>
+      <label class="chk"><input type="checkbox" id="fCharter"> 包團／客製：導覽員依這團個別安排（不跟船班）</label>
       <label>本團客製行程內容（選填，客製行程時填寫，會一併傳給導覽員）<textarea id="fTourNote"></textarea></label>
       <label>備註（單據、備案日期…）<textarea id="fNote"></textarea></label>
       <div class="acts">
@@ -212,15 +220,18 @@ textarea{min-height:74px;resize:vertical}
   </section>
   <!-- 導覽員 -->
   <section id="v-guides" class="col" hidden>
-    <form class="card" id="gForm" autocomplete="off">
-      <p class="sec">新增導覽員</p>
-      <div class="grid">
-        <label>姓名<input id="gName"></label>
-        <label>備註（選填）<input id="gNote" placeholder="例：英語、只能週末"></label>
+    <div class="card">
+      <p class="sec">選日期安排導覽員：海上依船班，陸上與包團依團</p>
+      <div class="acts" style="flex-wrap:nowrap">
+        <button class="ghost" type="button" id="aPrev" aria-label="前一天">‹</button>
+        <input id="aDate" type="date" aria-label="安排日期" style="flex:1">
+        <button class="ghost" type="button" id="aNext" aria-label="後一天">›</button>
       </div>
-      <div class="acts"><button class="primary" type="submit">加入名單</button><span class="msg" id="gMsg" role="status"></span></div>
-    </form>
-    <div id="gList" class="col"></div>
+      <p class="sub" id="aWeek" style="margin:0"></p>
+      <div class="acts" id="aActs"></div>
+    </div>
+    <div id="aBoard" class="col"></div>
+    <div class="card"><p class="sec">接下來 14 天</p><div id="aUp" class="col" style="gap:6px"></div></div>
   </section>
 
   <!-- 遊程 -->
@@ -245,6 +256,19 @@ textarea{min-height:74px;resize:vertical}
       <div class="acts"><button class="primary" type="submit">儲存</button><span class="msg" id="sMsg" role="status"></span></div>
     </form>
     <div class="card">
+      <p class="sec">導覽員名冊</p>
+      <p class="msg" style="margin:0">新增或刪除導覽員，並標記請假日；請假那天排班時會反灰不能選。</p>
+    <form id="gForm" class="col" style="gap:8px" autocomplete="off">
+      
+      <div class="grid">
+        <label>姓名<input id="gName"></label>
+        <label>備註（選填）<input id="gNote" placeholder="例：英語、只能週末"></label>
+      </div>
+      <div class="acts"><button class="primary" type="submit">加入名單</button><span class="msg" id="gMsg" role="status"></span></div>
+    </form>
+    <div id="gList" class="col"></div>
+    </div>
+    <div class="card">
       <p class="sec">船隻與載客上限</p>
       <p class="msg" style="margin:0">這裡是每艘船的預設上限。每天開哪幾艘船在「船班」頁設定，單日要調整某艘船的船位也在那裡改。輸入已有的船名會改成新的上限。</p>
       <div id="bList" class="col" style="gap:8px"></div>
@@ -252,6 +276,7 @@ textarea{min-height:74px;resize:vertical}
         <div class="grid">
           <label>船名<input id="bName" placeholder="例：金波羅"></label>
           <label>載客上限（人）<input id="bCap" type="number" min="1" inputmode="numeric"></label>
+          <label>每班導覽員（位）<input id="bNeed" type="number" min="0" inputmode="numeric" placeholder="例：2"></label>
         </div>
         <div class="acts"><button class="primary" type="submit">加入／更新</button><span class="msg" id="bMsg" role="status"></span></div>
       </form>
@@ -287,8 +312,8 @@ textarea{min-height:74px;resize:vertical}
 
   var STATUS=["待確認","已成單","導覽員已排定","已通知導覽員","已完成","取消"];
   var ACTIVE=["已成單","導覽員已排定","已通知導覽員"];
-  var VIEWS=[["bookings","團單"],["sailings","船班"],["visitors","遊客資料"],["guides","導覽員"],["tours","遊程"],["settings","設定"]];
-  var bookings=[],guides=[],tours=[],boats=[],sailings=[],perGuide=0,sDay=null;
+  var VIEWS=[["bookings","團單"],["sailings","船班"],["visitors","遊客資料"],["guides","導覽員安排"],["tours","遊程"],["settings","設定"]];
+  var bookings=[],guides=[],tours=[],boats=[],sailings=[],perGuide=0,sDay=null,aDay=null;
   var hasSail=false;  // 後端還沒更新（沒有船班資料）時，不檢查船位
   var OVERDUE_H=24;  // 待確認超過幾小時標紅
   var view="bookings",filter="全部",editId=null,editTour=null,armed=null,open={};
@@ -342,6 +367,61 @@ textarea{min-height:74px;resize:vertical}
     var x=Object.assign({},r,data),px=problem(x),pr=problem(r);
     if(!px||(pr&&pr.lvl>=px.lvl))return true;
     return confirm(md(x.date)+" "+px.msg+"。\n確定還要這樣做嗎？");
+  }
+  /* ---------- 導覽員：海上依船班、陸上與包團依團 ---------- */
+  // 後端更新後船隻會帶「導覽員人數」欄位，才能把導覽員存在船班上；之前一律依團排
+  function seaMode(){return hasSail&&boats.some(function(b){return "guideNeed" in b})}
+  function individual(r){return r.charter==="是"||!needsBoat(r)||!seaMode()}
+  function sailNeed(x){var b=boatByName(x.boat);return b&&+b.guideNeed>0?+b.guideNeed:1}
+  function sgl(x){return Array.isArray(x.guides)?x.guides:[]}
+  function guideByName(n){for(var i=0;i<guides.length;i++)if(guides[i].name===n)return guides[i];return null}
+  function offDays(g){return String(g&&g.off||"").split(/[、,\s]+/).filter(function(x){return /^\d{4}-\d{2}-\d{2}$/.test(x)})}
+  function isOff(name,date){return offDays(guideByName(name)).indexOf(date)>=0}
+  function openSails(date){return sailsOn(date).filter(function(x){return !x.stop})}
+  // 這位導覽員當天被排在哪些地方（排除 skipKey 那一處）
+  function placesOf(name,date,skipKey){
+    var out=[];
+    sailsOn(date).forEach(function(x){if("s:"+x.id!==skipKey&&sgl(x).indexOf(name)>=0)out.push(x.boat)});
+    bookings.forEach(function(o){if("b:"+o.id!==skipKey&&o.date===date&&o.status!=="取消"&&gl(o).indexOf(name)>=0)out.push(o.org||o.name||"團")});
+    return out;
+  }
+  function sailGap(date){return openSails(date).reduce(function(a,x){return a+Math.max(0,sailNeed(x)-sgl(x).length)},0)}
+  function indNeed(r){return Math.max(need(r),1)}
+  // 這團的導覽員排好了沒：個別團看自己；海上團看當天船班
+  function guideState(r){
+    if(individual(r)){var g=gl(r).length,n=indNeed(r);return {ok:g>=n,txt:"導覽員 "+g+"／需 "+n+" 位"}}
+    var os=openSails(r.date);
+    if(!os.length)return {ok:false,txt:"船班導覽員：這天沒有開船"};
+    var gap=sailGap(r.date);
+    return {ok:!gap,txt:gap?"船班導覽員還缺 "+gap+" 位":"船班導覽員已排齊"};
+  }
+  function guideChips(date,selected,skipKey,onToggle){
+    var chips=el("div","chips");
+    if(!guides.length){chips.appendChild(el("p","msg","還沒有導覽員名單。請到「設定」→「導覽員名冊」新增。"));return chips}
+    guides.slice().sort(function(a,b){return (a.name||"").localeCompare(b.name||"","zh-Hant")}).forEach(function(g){
+      var on=selected.indexOf(g.name)>=0,off=isOff(g.name,date),busy=placesOf(g.name,date,skipKey);
+      var b=el("button","ghost"+(on?" on":off?" offday":busy.length?" warnb":""),g.name+(off?"（請假）":busy.length?"（已排："+busy.join("、")+"）":""));
+      b.type="button";b.disabled=!canWrite||(off&&!on);b.setAttribute("aria-pressed",on?"true":"false");
+      b.onclick=function(){var cur=selected.slice(),i=cur.indexOf(g.name);if(i>=0)cur.splice(i,1);else cur.push(g.name);onToggle(cur)};
+      chips.appendChild(b);
+    });
+    return chips;
+  }
+  function seaGroups(date){
+    return bookings.filter(function(r){return r.date===date&&r.status!=="取消"&&needsBoat(r)&&!individual(r)})
+      .sort(function(a,b){return (a.time||"99").localeCompare(b.time||"99")||(a.createdAt||0)-(b.createdAt||0)});
+  }
+  function sailNotice(x,date){
+    var gs=seaGroups(date).filter(seats),os=openSails(date);
+    var t0=null;gs.forEach(function(r){var t=tourOf(r);if(t&&!t0)t0=t});
+    var times=gs.map(function(r){return r.time}).filter(Boolean).sort();
+    var L=["【帶團通知】","日期："+md(date),"船班："+x.boat,"導覽員："+(sgl(x).length?sgl(x).join("、"):"待排定"),
+      "集合時間："+(times[0]||"待定"),"集合地點："+(t0&&t0.meet?t0.meet:"待定")];
+    var n=gs.reduce(function(a,r){return a+total(r)},0);
+    L.push("\n當日海上團（共 "+gs.length+" 團、"+n+" 人"+(os.length>1?"，"+os.length+" 艘船合計":"")+"）：");
+    gs.forEach(function(r){var t=tourOf(r);L.push("・"+(r.time?r.time+" ":"")+who(r)+"　"+total(r)+" 位"+(t?"　"+t.name:""))});
+    var seen={};gs.forEach(function(r){var t=tourOf(r);if(t&&t.content&&!seen[t.id]){seen[t.id]=1;L.push("\n"+t.name+" 行程內容：\n"+t.content)}});
+    return L.join("\n");
   }
   function daySeat(r){
     if(!hasSail||!r.date||!needsBoat(r))return null;
@@ -742,7 +822,7 @@ textarea{min-height:74px;resize:vertical}
     var pend=bookings.filter(function(r){return r.status==="待確認"}).length;
     var late=bookings.filter(function(r){return waitH(r)>=OVERDUE_H}).length;
     var unread=bookings.filter(function(r){return r.unread}).length;
-    var toAssign=bookings.filter(function(r){return r.status==="已成單"}).length;
+    var toAssign=bookings.filter(function(r){return ACTIVE.indexOf(r.status)>=0&&r.date>=t&&!guideState(r).ok}).length;
     var week=bookings.filter(function(r){return ACTIVE.indexOf(r.status)>=0&&r.date>=t&&r.date<=end}).reduce(function(a,r){return a+total(r)},0);
     var s=$("stats");s.textContent="";
     [["待確認團單",pend+" 團"],["待排導覽員",toAssign+" 團"],["7 日內帶團",week+" 人"]].forEach(function(x){
@@ -754,9 +834,10 @@ textarea{min-height:74px;resize:vertical}
     var by={};
     bookings.forEach(function(r){if(ACTIVE.indexOf(r.status)>=0&&r.date>=t&&r.date<=addDays(t,13)){(by[r.date]=by[r.date]||[]).push(r)}});
     Object.keys(by).sort().forEach(function(k){
-      var rs=by[k],p=0,needTotal=0,names=[];
-      rs.forEach(function(r){p+=total(r);needTotal+=need(r);gl(r).forEach(function(n){if(names.indexOf(n)<0)names.push(n)})});
-      var assigned=rs.reduce(function(a,r){return a+gl(r).length},0);
+      var rs=by[k],p=0,gap=seaMode()?sailGap(k):0,names=[];
+      rs.forEach(function(r){p+=total(r);if(individual(r))gap+=Math.max(0,indNeed(r)-gl(r).length);gl(r).forEach(function(n){if(names.indexOf(n)<0)names.push(n)})});
+      openSails(k).forEach(function(x){sgl(x).forEach(function(n){if(names.indexOf(n)<0)names.push(n)})});
+      var needTotal=gap,assigned=0;
       var d=el("div","day");d.appendChild(el("small",null,md(k)));
       d.appendChild(el("b",null,p+" 人／"+rs.length+" 團"));
       d.appendChild(el("small",null,names.length?"導覽："+names.join("、"):"尚未排導覽員"));
@@ -773,28 +854,15 @@ textarea{min-height:74px;resize:vertical}
       var b=el("button",null,s+" "+n);b.type="button";b.setAttribute("aria-pressed",s===filter?"true":"false");
       b.onclick=function(){filter=s;render()};t.appendChild(b)});
   }
-  function busyOn(r,name){
-    return bookings.filter(function(o){return o.id!==r.id&&o.date===r.date&&o.status!=="取消"&&gl(o).indexOf(name)>=0}).length;
-  }
   function assignPanel(r){
     var box=el("div","col");
     box.appendChild(el("p","sec","點選導覽員加入或移除"));
-    if(!guides.length){box.appendChild(el("p","msg","還沒有導覽員名單。請到「導覽員」頁新增。"));return box}
-    var chips=el("div","chips");
-    guides.slice().sort(function(a,b){return (a.name||"").localeCompare(b.name||"","zh-Hant")}).forEach(function(g){
-      var on=gl(r).indexOf(g.name)>=0,busy=busyOn(r,g.name);
-      var b=el("button","ghost"+(on?" on":(busy?" warnb":"")),g.name+(busy?"（當日已 "+busy+" 團）":""));
-      b.type="button";b.disabled=!canWrite;b.setAttribute("aria-pressed",on?"true":"false");
-      b.onclick=function(){
-        var cur=gl(r).slice(),i=cur.indexOf(g.name);
-        if(i>=0)cur.splice(i,1);else cur.push(g.name);
-        var data={guides:cur};
-        if(cur.length&&r.status==="已成單")data.status="導覽員已排定";
-        if(!cur.length&&(r.status==="導覽員已排定"||r.status==="已通知導覽員"))data.status="已成單";
-        upd(r.id,data);
-      };
-      chips.appendChild(b)});
-    box.appendChild(chips);
+    box.appendChild(guideChips(r.date,gl(r),"b:"+r.id,function(cur){
+      var data={guides:cur};
+      if(cur.length&&r.status==="已成單")data.status="導覽員已排定";
+      if(!cur.length&&(r.status==="導覽員已排定"||r.status==="已通知導覽員"))data.status="已成單";
+      upd(r.id,data);
+    }));
     return box;
   }
   var sent={};
@@ -876,15 +944,16 @@ textarea{min-height:74px;resize:vertical}
       if(warn.childNodes.length)left.appendChild(warn);
       h.appendChild(left);
       var pl=el("div");pl.style.cssText="display:flex;flex-direction:column;gap:6px;align-items:flex-end";
-      pl.appendChild(el("span","pill s-"+r.status,r.status));pl.appendChild(el("span","pill",r.type||"散客"));if(r.source)pl.appendChild(el("span","pill",r.source));
+      pl.appendChild(el("span","pill s-"+r.status,r.status));pl.appendChild(el("span","pill",r.type||"散客"));if(r.charter==="是")pl.appendChild(el("span","pill","包團"));if(r.source)pl.appendChild(el("span","pill",r.source));
       h.appendChild(pl);c.appendChild(h);
       var ds=daySeat(r);if(ds){var dsr=el("div","acts");dsr.appendChild(ds);c.appendChild(dsr)}
 
       var n=need(r),g=gl(r);
       if(ACTIVE.indexOf(r.status)>=0||g.length){
-        var gp=el("div","acts");
-        gp.appendChild(el("span","pill "+((n&&g.length<n)||!g.length?"lack":"okp"),"導覽員 "+g.length+(n?"／需 "+n:"")+" 位"));
-        if(g.length)gp.appendChild(el("span",null,g.join("、")));
+        var gp=el("div","acts"),gs=guideState(r);
+        gp.appendChild(el("span","pill "+(gs.ok?"okp":"lack"),gs.txt));
+        if(individual(r)){if(g.length)gp.appendChild(el("span",null,g.join("、")))}
+        else{var sn=[];openSails(r.date).forEach(function(x){sgl(x).forEach(function(nm){if(sn.indexOf(nm)<0)sn.push(nm)})});if(sn.length)gp.appendChild(el("span",null,sn.join("、")))}
         if(total(r))gp.appendChild(el("span","pill "+(paxOf(r).length<total(r)?"lack":"okp"),"旅客名單 "+paxOf(r).length+"／"+total(r)+" 位"));
         c.appendChild(gp);
       }
@@ -916,8 +985,8 @@ textarea{min-height:74px;resize:vertical}
         var b=el("button","ghost"+(open[r.id]===key?" on":""),label);b.type="button";
         b.onclick=function(){open[r.id]=open[r.id]===key?null:key;render()};acts.appendChild(b);
       }
-      tog("找導覽員","ask");tog("排導覽員","assign");
-      if(g.length)tog("通知導覽員","notice");
+      if(individual(r)){tog("找導覽員","ask");tog("排導覽員","assign");if(g.length)tog("通知導覽員","notice")}
+      else{var gv=el("button","ghost","導覽員（依船班）");gv.type="button";gv.onclick=function(){aDay=r.date;view="guides";render();window.scrollTo(0,0)};acts.appendChild(gv)}
       tog("旅客名單","pax");
       tog("回覆客人","reply");
       var ed=el("button","ghost","編輯");ed.type="button";ed.disabled=!canWrite;ed.onclick=function(){startEdit(r)};acts.appendChild(ed);
@@ -956,21 +1025,106 @@ textarea{min-height:74px;resize:vertical}
   }
 
   /* guides view */
+  /* 設定：導覽員名冊與請假日 */
   function renderGuides(){
     var L=$("gList");L.textContent="";
-    if(!guides.length){L.appendChild(el("div","card empty","還沒有導覽員。先加入名單，排導覽員時才能點選。"));return}
+    if(!guides.length){L.appendChild(el("p","msg","還沒有導覽員。先加入名單，排導覽員時才能點選。"));return}
     var t=today();
     guides.slice().sort(function(a,b){return (a.name||"").localeCompare(b.name||"","zh-Hant")}).forEach(function(g){
-      var c=el("div","card item"),h=el("div","head");
-      var left=el("div");left.appendChild(el("h3",null,g.name));if(g.note)left.appendChild(el("p","sub",g.note));
-      var up=bookings.filter(function(r){return r.date>=t&&ACTIVE.indexOf(r.status)>=0&&gl(r).indexOf(g.name)>=0}).sort(function(a,b){return a.date.localeCompare(b.date)});
-      left.appendChild(el("p","sub",up.length?"待帶團："+up.map(function(r){return md(r.date)}).join("、"):"目前沒有待帶的團"));
+      var c=el("div","gbox"),h=el("div","acts");h.style.justifyContent="space-between";
+      var left=el("div");left.appendChild(el("b",null,g.name));if(g.note)left.appendChild(el("span","msg","　"+g.note));
       h.appendChild(left);
       var del=el("button","ghost danger",armed==="g"+g.id?"再按一次確認刪除":"刪除");del.type="button";del.disabled=!canWrite||isTmp(g.id);
       del.onclick=function(){if(armed!=="g"+g.id){armed="g"+g.id;render();return}armed=null;db.remove("guides",g.id).catch(fail)};
-      h.appendChild(del);c.appendChild(h);L.appendChild(c);
+      h.appendChild(del);c.appendChild(h);
+      var up={};
+      bookings.forEach(function(r){if(r.date>=t&&r.status!=="取消"&&gl(r).indexOf(g.name)>=0)up[r.date]=1});
+      sailings.forEach(function(x){if(x.date>=t&&!x.stop&&sgl(x).indexOf(g.name)>=0)up[x.date]=1});
+      var ud=Object.keys(up).sort();
+      c.appendChild(el("p","msg",ud.length?"待帶團："+ud.map(md).join("、"):"目前沒有待帶的團"));
+      var offs=offDays(g).filter(function(d){return d>=t}).sort(),row=el("div","acts");
+      row.appendChild(el("span","msg","請假日："+(offs.length?"":"無")));
+      offs.forEach(function(d){
+        var x=el("button","ghost small",md(d)+" ✕");x.type="button";x.disabled=!canWrite||isTmp(g.id);x.setAttribute("aria-label","取消 "+md(d)+" 請假");
+        x.onclick=function(){db.update("guides",g.id,{off:offs.filter(function(o){return o!==d}).join("、")}).catch(fail)};row.appendChild(x);
+      });
+      var di=el("input");di.type="date";di.style.width="auto";di.style.flex="0 1 170px";di.setAttribute("aria-label",g.name+" 請假日期");
+      var ad=el("button","ghost","加入請假日");ad.type="button";ad.disabled=!canWrite||isTmp(g.id);
+      ad.onclick=function(){var d=di.value;if(!d)return;if(offs.indexOf(d)<0)db.update("guides",g.id,{off:offs.concat([d]).sort().join("、")}).catch(fail)};
+      row.appendChild(di);row.appendChild(ad);c.appendChild(row);
+      L.appendChild(c);
     });
   }
+  /* 導覽員安排：選日期，海上依船班、陸上與包團依團 */
+  function renderAssign(){
+    if(!aDay){aDay=today();for(var i=0;i<30;i++){var d=addDays(today(),i);if(openSails(d).length||bookings.some(function(r){return r.date===d&&ACTIVE.indexOf(r.status)>=0})){aDay=d;break}}}
+    if(document.activeElement!==$("aDate"))$("aDate").value=aDay;
+    $("aWeek").textContent=md(aDay);
+    var B=$("aBoard");B.textContent="";
+    var A=$("aActs");A.textContent="";
+    var all=[];
+    // 海上船班
+    var sea=el("div","card");sea.appendChild(el("p","sec","海上船班"));
+    var gs=seaGroups(aDay),sails=sailsOn(aDay);
+    if(gs.length){
+      var n1=gs.filter(seats).reduce(function(a,r){return a+total(r)},0),n2=gs.filter(function(r){return r.status==="待確認"}).reduce(function(a,r){return a+total(r)},0);
+      sea.appendChild(el("p","msg","當日海上團 "+gs.filter(seats).length+" 團、"+n1+" 人"+(n2?"（另 "+n2+" 人待確認）":"")+"："+gs.map(function(r){return (r.time?r.time+" ":"")+who(r)+" "+total(r)+" 人"+(r.status==="待確認"?"（待確認）":"")}).join("；")));
+    }
+    if(!seaMode())sea.appendChild(el("p","msg err","後端還沒更新，暫時無法依船班安排，海上團請在下方依團安排。更新 Apps Script 並部署新版本後就會出現船班。"));
+    else if(!sails.length)sea.appendChild(el("p","msg"+(gs.length?" err":""),gs.length?"這天有海上團，但還沒設定船班。請先到「船班」頁點選當天開的船。":"這天沒有開船。"));
+    if(seaMode())sails.forEach(function(x){
+      var box=el("div","gbox"),need=sailNeed(x),g=sgl(x),ok=g.length>=need;
+      box.className="gbox"+(x.stop?"":ok?" okb":" lack");
+      var h=el("h4");h.appendChild(document.createTextNode(x.boat));
+      h.appendChild(el("span","pill "+(x.stop?"":ok?"okp":"lack"),x.stop?"停航":"導覽員 "+g.length+"／需 "+need+" 位"));
+      box.appendChild(h);
+      if(!x.stop){
+        box.appendChild(guideChips(aDay,g,"s:"+x.id,function(cur){db.update("sailings",x.id,{guides:cur}).catch(fail)}));
+        var txt=sailNotice(x,aDay);all.push(txt);
+        var cp=el("button","ghost","複製這艘船的帶團通知");cp.type="button";cp.style.alignSelf="flex-start";cp.onclick=function(){copy(txt,cp)};box.appendChild(cp);
+      }
+      sea.appendChild(box);
+    });
+    B.appendChild(sea);
+    // 個別安排的團
+    var ind=el("div","card");ind.appendChild(el("p","sec","個別安排的團（陸上、包團／客製）"));
+    var list=bookings.filter(function(r){return r.date===aDay&&r.status!=="取消"&&individual(r)})
+      .sort(function(a,b){return (a.time||"99").localeCompare(b.time||"99")});
+    if(!list.length)ind.appendChild(el("p","msg","這天沒有個別安排的團。"));
+    list.forEach(function(r){
+      var st=guideState(r),box=el("div","gbox"+(st.ok?" okb":" lack")),t=tourOf(r);
+      var h=el("h4");h.appendChild(document.createTextNode((r.time?r.time+" ":"")+who(r)+"　"+total(r)+" 人"+(t?"　"+t.name:"")));
+      var ps=el("span");ps.appendChild(el("span","pill s-"+r.status,r.status));ps.appendChild(document.createTextNode(" "));ps.appendChild(el("span","pill "+(st.ok?"okp":"lack"),st.txt));h.appendChild(ps);
+      box.appendChild(h);
+      box.appendChild(guideChips(aDay,gl(r),"b:"+r.id,function(cur){
+        var data={guides:cur};
+        if(cur.length&&r.status==="已成單")data.status="導覽員已排定";
+        if(!cur.length&&(r.status==="導覽員已排定"||r.status==="已通知導覽員"))data.status="已成單";
+        upd(r.id,data);
+      }));
+      if(ACTIVE.indexOf(r.status)>=0){var txt=guideNotice(r);all.push(txt);
+        var cp=el("button","ghost","複製這團的帶團通知");cp.type="button";cp.style.alignSelf="flex-start";cp.onclick=function(){copy(txt,cp)};box.appendChild(cp)}
+      ind.appendChild(box);
+    });
+    B.appendChild(ind);
+    if(all.length){var ca=el("button","ghost","複製當天全部帶團通知");ca.type="button";ca.onclick=function(){copy(all.join("\n\n— — —\n\n"),ca)};A.appendChild(ca)}
+    // 接下來 14 天
+    var U=$("aUp");U.textContent="";var any=false,t0=today();
+    for(var i=0;i<14;i++)(function(d){
+      var os=openSails(d),ib=bookings.filter(function(r){return r.date===d&&ACTIVE.indexOf(r.status)>=0&&individual(r)});
+      var sg=seaGroups(d).filter(seats);
+      if(!os.length&&!ib.length&&!sg.length)return;any=true;
+      var gap=(seaMode()?sailGap(d):0)+ib.reduce(function(a,r){return a+Math.max(0,indNeed(r)-gl(r).length)},0);
+      var nosail=seaMode()&&sg.length&&!os.length;
+      var b=el("button","ghost"+(d===aDay?" on":gap||nosail?" danger":""),md(d)+"　"+(os.length?"船班 "+os.length+" 艘":"")+(os.length&&ib.length?"・":"")+(ib.length?"個別團 "+ib.length+" 團":"")+
+        (nosail?"　有海上團但沒開船":gap?"　還缺 "+gap+" 位":"　已排齊"));
+      b.type="button";b.style.textAlign="left";b.onclick=function(){aDay=d;render();window.scrollTo(0,0)};U.appendChild(b);
+    })(addDays(t0,i));
+    if(!any)U.appendChild(el("p","msg","接下來 14 天沒有需要安排的團。"));
+  }
+  $("aDate").addEventListener("change",function(){if($("aDate").value){aDay=$("aDate").value;render()}});
+  $("aPrev").onclick=function(){aDay=addDays(aDay||today(),-1);render()};
+  $("aNext").onclick=function(){aDay=addDays(aDay||today(),1);render()};
   /* 船班：一天一艘船一班 */
   function renderSailings(){
     if(!sDay)sDay=today();
@@ -1049,7 +1203,7 @@ textarea{min-height:74px;resize:vertical}
     var t=today();
     boats.forEach(function(b){
       var row=el("div","acts");row.style.justifyContent="space-between";
-      row.appendChild(el("span",null,b.name+"　載客上限 "+(b.capacity||"未填")+" 人"));
+      row.appendChild(el("span",null,b.name+"　載客上限 "+(b.capacity||"未填")+" 人・每班導覽員 "+(+b.guideNeed>0?b.guideNeed:"1（未設定）")+" 位"));
       var uses=sailings.filter(function(x){return x.boat===b.name&&x.date>=t}).length;
       var k="b"+b.id,del=el("button","ghost danger",armed===k?(uses?"之後還有 "+uses+" 個船班，再按一次刪除":"再按一次確認刪除"):"刪除");
       del.type="button";del.disabled=!canWrite||isTmp(b.id);
@@ -1058,11 +1212,12 @@ textarea{min-height:74px;resize:vertical}
     });
   }
   $("bForm").addEventListener("submit",function(e){
-    e.preventDefault();var name=$("bName").value.trim(),cap=+$("bCap").value||0;
-    if(!name||cap<1){$("bMsg").textContent="請填船名與載客上限";return}
+    e.preventDefault();var name=$("bName").value.trim(),cap=+$("bCap").value||0,gn=$("bNeed").value===""?null:Math.max(0,+$("bNeed").value||0);
     var ex=boats.filter(function(b){return b.name===name})[0];
-    $("bForm").reset();$("bMsg").textContent=ex?"已更新「"+name+"」上限":"";
-    (ex?db.update("boats",ex.id,{capacity:cap}):db.add("boats",{name:name,capacity:cap})).catch(function(err){
+    if(!name||(cap<1&&!(ex&&gn!=null))){$("bMsg").textContent="請填船名與載客上限";return}
+    var d={};if(cap>=1)d.capacity=cap;if(gn!=null)d.guideNeed=gn;
+    $("bForm").reset();$("bMsg").textContent=ex?"已更新「"+name+"」":"";
+    (ex?db.update("boats",ex.id,d):db.add("boats",Object.assign({name:name},d))).catch(function(err){
       if(err&&err.code==="auth")return;
       $("bName").value=name;$("bCap").value=cap;$("bMsg").textContent="剛剛沒有存到，請再按一次";
     });
@@ -1102,10 +1257,10 @@ textarea{min-height:74px;resize:vertical}
     var a=document.activeElement,foc=a&&a.dataset&&a.dataset.pax,sel=foc?[a.selectionStart,a.selectionEnd]:null;
     if(view==="bookings"){renderStats();renderTabs();renderList()}
     if(foc){var nt=document.querySelector('textarea[data-pax="'+foc+'"]');if(nt){nt.focus();try{nt.setSelectionRange(sel[0],sel[1])}catch(e){}}}
-    if(view==="guides")renderGuides();
+    if(view==="guides")renderAssign();
     if(view==="sailings")renderSailings();
     if(view==="tours"){renderTourForm();renderTours()}
-    if(view==="settings"){if(document.activeElement!==$("sPer"))$("sPer").value=perGuide||"";renderBoats();renderTemplates()}
+    if(view==="settings"){if(document.activeElement!==$("sPer"))$("sPer").value=perGuide||"";renderBoats();renderGuides();renderTemplates()}
   }
 
   /* booking form */
@@ -1137,7 +1292,8 @@ textarea{min-height:74px;resize:vertical}
   var FIELDS={type:"fType",org:"fOrg",name:"fName",phone:"fPhone",date:"fDate",time:"fTime",adult:"fAdult",kid:"fKid",tourId:"fTour",slot:"fSlot",quote:"fQuote",deposit:"fDeposit",bus:"fBus",meal:"fMeal",note:"fNote",tourNote:"fTourNote"};
   function fillForm(o){
     if(o.tourName){for(var i=0;i<tours.length;i++)if(tours[i].name===o.tourName)o.tourId=tours[i].id}
-    Object.keys(FIELDS).forEach(function(k){if(o[k]!=null&&o[k]!=="")$(FIELDS[k]).value=o[k]})}
+    Object.keys(FIELDS).forEach(function(k){if(o[k]!=null&&o[k]!=="")$(FIELDS[k]).value=o[k]});
+    if(o.charter!=null)$("fCharter").checked=o.charter==="是"}
   function startEdit(r){
     editId=r.id;$("form").reset();renderTourForm();fillForm(r);
     $("pasteBox").hidden=true;$("saveBtn").textContent="儲存修改";$("form").hidden=false;$("fMsg").textContent="";
@@ -1156,7 +1312,7 @@ textarea{min-height:74px;resize:vertical}
     var doc={type:$("fType").value,org:$("fOrg").value.trim(),name:$("fName").value.trim(),phone:$("fPhone").value.trim(),
       date:$("fDate").value,time:$("fTime").value,slot:$("fSlot").value.trim(),adult:+$("fAdult").value||0,kid:+$("fKid").value||0,
       tourId:$("fTour").value,note:$("fNote").value.trim(),bus:$("fBus").value.trim(),meal:$("fMeal").value.trim(),
-      tourNote:$("fTourNote").value.trim(),quote:+$("fQuote").value||0,deposit:+$("fDeposit").value||0};
+      tourNote:$("fTourNote").value.trim(),quote:+$("fQuote").value||0,deposit:+$("fDeposit").value||0,charter:$("fCharter").checked?"是":""};
     if(!doc.name&&!doc.org){$("fMsg").textContent="請至少填聯絡人或單位名稱";return}
     var id=editId,p;
     if(id){
