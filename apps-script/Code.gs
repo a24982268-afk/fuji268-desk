@@ -153,6 +153,10 @@ function handle(req) {
     var id = null, coll = req.collection;
     if (req.action === 'settings') {
       writeSettings(req.data || {});
+    } else if (req.action === 'saveTemplate') {
+      saveTemplate_(String(req.code || ''), String(req.text == null ? '' : req.text));
+    } else if (req.action === 'saveReplies') {
+      saveReplies_(req.rows);
     } else {
       if (!SHEETS[coll]) return { ok: false, code: 'error', message: '未知的資料類別' };
       if (req.action === 'add') {
@@ -370,7 +374,8 @@ function writeSettings(d) {
 function loadAll() {
   var bookings = readRows('bookings');
   bookings.forEach(function (b) { b.paxUrl = paxUrl_(b.id); });
-  return { bookings: bookings, guides: readRows('guides'), tours: readRows('tours'), boats: readRows('boats'), sailings: readRows('sailings'), settings: readSettings() };
+  return { bookings: bookings, guides: readRows('guides'), tours: readRows('tours'), boats: readRows('boats'), sailings: readRows('sailings'), settings: readSettings(),
+    templates: templateList_(), autoReplies: replyRows_() };
 }
 
 function newId() {
@@ -699,9 +704,7 @@ function lineEvent_(ev) {
     lock.waitLock(20000);
     try { b.code = nextCode_(); putRow('bookings', id, b, false); SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
     var n = (+b.adult || 0) + (+b.kid || 0);
-    lineReply_(ev.replyToken, (b.name || name || '您') + '您好，這裡是蹦火仔，已收到您' +
-      (b.date ? ' ' + Utilities.formatDate(new Date(b.date + 'T00:00:00+08:00'), TZ, 'M/d') + ' ' : '') +
-      '的預約詢問' + (n ? '（共 ' + n + ' 位）' : '') + '，團號 ' + b.code + '。我們確認導覽員後會盡快回覆您，之後有任何修改直接在這裡告訴我們即可，謝謝！');
+    lineReply_(ev.replyToken, fillTpl_(tpl_('bot_received'), tplVals_(b, { 姓名: b.name || name || '您', 人數: n ? String(n) : '' })));
     handled = '建立待確認團單 ' + b.code;
   } else {
     var m = matchReply_(text, false);
@@ -926,13 +929,11 @@ function linePostback_(ev) {
   if (m[1] === 'ok') {
     setBooking_(b.id, { confirm: '已確認', confirmAt: stamp });
     addInbox_(b.id, '（按了「確認無誤」）', false);
-    var lack = (+b.adult || 0) + (+b.kid || 0) - (b.passengers || []).length;
-    lineReply_(ev.replyToken, '已收到您的確認，謝謝！' +
-      (lack > 0 ? '\n\n還需要 ' + lack + ' 位旅客的資料（印船班名冊用），請由此填寫：\n' + paxUrl_(b.id) : '\n我們出發前會再提醒您集合資訊。'));
+    lineReply_(ev.replyToken, fillTpl_(tpl_('bot_ok'), tplVals_(b)));
   } else {
     setBooking_(b.id, { confirm: '要修改', confirmAt: stamp });
     addInbox_(b.id, '（按了「需要修改」）', true);
-    lineReply_(ev.replyToken, '好的，請直接在這裡告訴我們要修改的地方（日期、人數、集合時間…），我們會盡快處理並重新確認。');
+    lineReply_(ev.replyToken, fillTpl_(tpl_('bot_change'), tplVals_(b)));
   }
   lineLogSheet().appendRow([stamp, lineName_(uid), uid, m[1] === 'ok' ? '（確認無誤）' : '（需要修改）', '團單 ' + (b.code || '')]);
 }
@@ -991,8 +992,7 @@ function paxReminders_() {
     if (b.date !== target || ACTIVE.indexOf(b.status) < 0 || !b.lineUser || b.paxReminded) return;
     var lack = (+b.adult || 0) + (+b.kid || 0) - (b.passengers || []).length;
     if (lack <= 0) return;
-    var r = pushTo_(b.lineUser, [{ type: 'text', text: (b.name || '您') + '您好，這裡是蹦火仔。' + mdw_(b.date) +
-      ' 的行程還需要 ' + lack + ' 位旅客的資料（印船班名冊用），麻煩您由此填寫，謝謝！\n' + paxUrl_(b.id) }]);
+    var r = pushTo_(b.lineUser, [{ type: 'text', text: fillTpl_(tpl_('bot_pax'), tplVals_(b)) }]);
     if (r.ok) {
       setBooking_(b.id, { paxReminded: Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm') });
       addInbox_(b.id, '（系統已提醒客人填寫旅客名單）', false);
@@ -1007,4 +1007,110 @@ function 測試LINE連線() {
   var res = UrlFetchApp.fetch('https://api.line.me/v2/bot/info', { headers: { Authorization: 'Bearer ' + tok }, muteHttpExceptions: true });
   if (res.getResponseCode() === 200) Logger.log('連線成功：' + JSON.parse(res.getContentText()).displayName);
   else Logger.log('LINE 回應 ' + res.getResponseCode() + '（token 可能貼錯）：' + res.getContentText());
+}
+
+/* ---------- 訊息範本（接團台「設定」頁可改） ---------- */
+// 寫法：{欄位} 會換成團單資料；{欄位|預設字} 欄位空白時用預設字；[ … ] 裡面只要有欄位是空的，整段就不顯示。
+
+var TPL_TITLE = '訊息範本';
+var TEMPLATES = [
+  ['reply_received', '回覆客人：確認收到', '{姓名}您好，這裡是蹦火仔，已收到您 {日期} 的預約詢問（共 {人數} 位）[，團號 {團號}]。我們確認導覽員後會盡快回覆您，謝謝！'],
+  ['reply_booked', '回覆客人：確認成功', '{姓名}您好，蹦火仔已為您安排 {日期}[ {集合時間} 集合]，共 {人數} 位。若人數或時間有變動，請提前告知我們，謝謝！'],
+  ['reply_detail', '回覆客人：補問細節', '{姓名}您好，想再跟您確認幾個細節：抵達時間、實際人數、用餐與交通方式，以及是否有行動不便或特殊需求。方便的話請直接回覆，謝謝！'],
+  ['reply_full', '回覆客人：日期客滿', '{姓名}您好，很抱歉，{日期} 已無法安排。請問是否可以改到其他日期？我們幫您看看可行的時段。'],
+  ['reply_stop', '回覆客人：停航改期（當天有停航才出現）', '{姓名}您好，很抱歉，{日期} 因天候／海況因素停航，為了安全這天無法出船。請問方便改到其他日期嗎？我們會優先幫您安排，造成不便敬請見諒。'],
+  ['reply_pretrip', '回覆客人：行前通知', '{姓名}您好，這裡是蹦火仔，提醒您 {日期} 的行程：\n集合時間：{集合時間|待定}\n集合地點：{集合地點|待定}\n[遊程：{遊程}\n]人數：{人數} 位[\n\n行程內容：\n{遊程內容}][\n\n本團安排：\n{本團安排}][\n\n另外還需要 {缺名單人數} 位旅客的姓名、身分證字號（或護照號碼）、出生年月日與電話，以便製作船班名冊，請由此填寫：\n{名單連結}]\n\n當天請攜帶身分證件。如遇天候因素需要調整行程，我們會再另行通知。期待與您見面！'],
+  ['reply_paxlink', '回覆客人：填寫名單連結', '{姓名}您好，這裡是蹦火仔。麻煩您幫忙填寫 {日期} 行程的旅客資料（印船班名冊用），謝謝！\n{名單連結}'],
+  ['bot_received', '機器人：收到預約詢問', '{姓名}您好，這裡是蹦火仔，已收到您[ {日期} ]的預約詢問[（共 {人數} 位）]，團號 {團號}。我們確認導覽員後會盡快回覆您，之後有任何修改直接在這裡告訴我們即可，謝謝！'],
+  ['bot_ok', '機器人：客人按「確認無誤」後', '已收到您的確認，謝謝！[\n\n還需要 {缺名單人數} 位旅客的資料（印船班名冊用），請由此填寫：\n{名單連結}]'],
+  ['bot_change', '機器人：客人按「需要修改」後', '好的，請直接在這裡告訴我們要修改的地方（日期、人數、集合時間…），我們會盡快處理並重新確認。'],
+  ['bot_pax', '機器人：出發前 3 天提醒填名單', '{姓名}您好，這裡是蹦火仔。{日期} 的行程還需要 {缺名單人數} 位旅客的資料（印船班名冊用），麻煩您由此填寫，謝謝！\n{名單連結}']
+];
+
+function tplSheet_() {
+  var ss = book(), sh = ss.getSheetByName(TPL_TITLE);
+  if (!sh) {
+    sh = ss.insertSheet(TPL_TITLE);
+    sh.getRange(1, 1, sh.getMaxRows(), 3).setNumberFormat('@');
+    sh.getRange(1, 1, 1, 3).setValues([['代碼', '名稱', '內容（空白＝用預設）']]).setFontWeight('bold');
+    sh.getRange(2, 1, TEMPLATES.length, 3).setValues(TEMPLATES.map(function (t) { return [t[0], t[1], '']; }));
+    sh.setColumnWidth(2, 220); sh.setColumnWidth(3, 480);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function tplSaved_() {
+  var o = {};
+  tplSheet_().getDataRange().getDisplayValues().slice(1).forEach(function (r) { if (r[0] && String(r[2]).trim()) o[r[0]] = r[2]; });
+  return o;
+}
+
+function tpl_(code) {
+  var saved = tplSaved_();
+  if (saved[code]) return saved[code];
+  for (var i = 0; i < TEMPLATES.length; i++) if (TEMPLATES[i][0] === code) return TEMPLATES[i][2];
+  return '';
+}
+
+function templateList_() {
+  var saved = tplSaved_();
+  return TEMPLATES.map(function (t) { return { code: t[0], name: t[1], def: t[2], text: saved[t[0]] || '' }; });
+}
+
+function saveTemplate_(code, text) {
+  var known = TEMPLATES.some(function (t) { return t[0] === code; });
+  if (!known) throw new Error('未知的範本');
+  var sh = tplSheet_(), vals = sh.getDataRange().getDisplayValues(), v = text.slice(0, 4000);
+  if (v.charAt(0) === '=') v = ' ' + v;
+  for (var i = 1; i < vals.length; i++) if (vals[i][0] === code) { sh.getRange(i + 1, 3).setValue(v); return; }
+  var name = '';
+  TEMPLATES.forEach(function (t) { if (t[0] === code) name = t[1]; });
+  sh.appendRow([code, name, v]);
+}
+
+function fillTpl_(tpl, vals) {
+  var get = function (k) { var p = k.split('|'); var v = vals[p[0]]; return (v === undefined || v === null || v === '') ? (p[1] || '') : String(v); };
+  var out = String(tpl).replace(/\[([\s\S]*?)\]/g, function (m, inner) {
+    var ok = true;
+    inner.replace(/\{([^{}]+)\}/g, function (x, k) { if (!get(k)) ok = false; return x; });
+    return ok ? inner : '';
+  });
+  return out.replace(/\{([^{}]+)\}/g, function (m, k) { return get(k); }).replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function tplVals_(b, extra) {
+  var t = null;
+  readRows('tours').forEach(function (x) { if (x.id === b.tourId) t = x; });
+  var n = (+b.adult || 0) + (+b.kid || 0), lack = n - (b.passengers || []).length;
+  var v = {
+    姓名: b.name || '您', 日期: b.date ? mdw_(b.date) : '', 人數: String(n), 大人: String(+b.adult || 0), 小孩: String(+b.kid || 0),
+    團號: b.code || '', 集合時間: b.time || '', 集合地點: (t && t.meet) || '', 遊程: (t && t.name) || '',
+    遊程內容: (t && t.content) || '', 本團安排: b.tourNote || '',
+    費用: b.quote ? '$' + (+b.quote).toLocaleString('en-US') : '', 訂金: b.deposit ? '$' + (+b.deposit).toLocaleString('en-US') : '',
+    缺名單人數: lack > 0 ? String(lack) : '', 名單連結: lack > 0 && b.id ? paxUrl_(b.id) : ''
+  };
+  Object.keys(extra || {}).forEach(function (k) { v[k] = extra[k]; });
+  return v;
+}
+
+/* ---------- 關鍵字自動回覆（接團台「設定」頁可改） ---------- */
+
+function replyRows_() {
+  return replySheet().getDataRange().getDisplayValues().slice(1)
+    .filter(function (r) { return String(r[0]).trim() || String(r[1]).trim(); })
+    .map(function (r) { return [r[0], r[1]]; });
+}
+
+function saveReplies_(rows) {
+  if (!Array.isArray(rows)) throw new Error('格式不對');
+  var clean = rows.slice(0, 200).map(function (r) {
+    var k = String((r && r[0]) || '').trim().slice(0, 500), t = String((r && r[1]) || '').slice(0, 4000);
+    if (t.charAt(0) === '=') t = ' ' + t;
+    if (k.charAt(0) === '=') k = ' ' + k;
+    return [k, t];
+  }).filter(function (r) { return r[0] || r[1]; });
+  var sh = replySheet(), last = sh.getLastRow();
+  if (last > 1) sh.getRange(2, 1, last - 1, 2).clearContent();
+  if (clean.length) sh.getRange(2, 1, clean.length, 2).setNumberFormat('@').setValues(clean).setWrap(true);
 }

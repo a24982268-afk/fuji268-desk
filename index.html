@@ -77,6 +77,11 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .boatrow.stopped .acts .ghost:last-child{text-decoration:none}
 .item h3 .code{font-size:13px;font-weight:500;color:var(--muted);margin-left:4px}
 .inbox.unread .note{background:var(--bad-soft)}
+.tplbox{border:1.5px solid var(--line);border-radius:10px;padding:10px 12px}
+.tplbox summary{cursor:pointer;font-weight:700;font-size:14px}
+.tplpv{font-size:13px;color:var(--muted)}
+.kwrow{border:1.5px solid var(--line);border-radius:10px;padding:8px 10px}
+.tplhelp summary{cursor:pointer;font-size:14px;font-weight:700;color:var(--fg)}
 .note.lackn{background:var(--bad-soft);color:var(--bad);font-weight:700}
 .note{background:var(--bg);border-radius:8px;padding:8px 10px;font-size:14px;white-space:pre-wrap;word-break:break-word;margin:0}
 .acts{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -220,12 +225,33 @@ textarea{min-height:74px;resize:vertical}
         <div class="acts"><button class="primary" type="submit">加入／更新</button><span class="msg" id="bMsg" role="status"></span></div>
       </form>
     </div>
+    <div class="card" id="tplCard">
+      <p class="sec">訊息範本</p>
+      <p class="msg" style="margin:0">「回覆客人」的範本和機器人自動傳的訊息都在這裡改，存檔後所有手機同步。</p>
+      <details class="tplhelp"><summary>怎麼寫（可放入的欄位）</summary>
+        <p class="msg">點下面的欄位會插入到正在編輯的框裡，傳送時自動換成團單資料：</p>
+        <div class="chips" id="tplChips"></div>
+        <p class="msg">・<b>{集合時間|待定}</b>：欄位空白時顯示「待定」。<br>・<b>[ … ]</b>：方括號裡只要有欄位是空的，整段就不顯示。例如 <b>[，團號 {團號}]</b> 沒有團號時就不出現。</p>
+      </details>
+      <div id="tplList" class="col"></div>
+      <p class="sec" style="margin-top:8px">機器人關鍵字自動回覆</p>
+      <p class="msg" style="margin:0">客人訊息裡有關鍵字（用逗號分開）就回覆右邊的內容；由上往下找，第一個對到的就用。「（加好友）」是加好友時的歡迎訊息。</p>
+      <div id="kwList" class="col" style="gap:8px"></div>
+      <div class="acts"><button class="ghost" type="button" id="kwAdd">＋ 新增一列</button><button class="primary" type="button" id="kwSave">儲存關鍵字回覆</button><span class="msg" id="kwMsg" role="status"></span></div>
+    </div>
     <form class="card" id="mForm">
       <p class="sec">船班名冊</p>
       <p class="msg" style="margin:0">每天早上 7 點會自動產生 3 天後所有已成單團的旅客名冊（也會更新 1、2 天後的），放在店家 Google 雲端硬碟的「蹦火仔船班名冊」資料夾，打開 PDF 就能列印。名單臨時有變動，可以在這裡重新產生：</p>
       <label>日期<input id="mDate" type="date" required></label>
       <div class="acts"><button class="primary" type="submit" id="mBtn">產生名冊</button><span class="msg" id="mMsg" role="status"></span></div>
       <div class="acts" id="mLinks"></div>
+      <p class="msg" style="margin:0">下載 Word 檔（可以編輯，直接存到這支手機或電腦）：</p>
+      <div class="acts">
+        <button class="ghost" type="button" id="wFull">下載 Word：完整名冊</button>
+        <button class="ghost" type="button" id="wCheck">下載 Word：報到點名表（無證號）</button>
+        <span class="msg" id="wMsg" role="status"></span>
+      </div>
+      <p class="msg" style="margin:0">報到點名表只有姓名與出生年，沒有身分證字號、生日月日與電話，適合在報到處公開使用。</p>
     </form>
     <form class="card" id="xForm">
       <p class="sec">匯出遊客資訊（Excel）</p>
@@ -263,7 +289,7 @@ textarea{min-height:74px;resize:vertical}
   var OVERDUE_H=24;  // 待確認超過幾小時標紅
   var view="bookings",filter="全部",editId=null,editTour=null,armed=null,open={};
   var token=null,authed=false,canWrite=true,seq=0,appliedSeq=0,lastJson="",lastSync=null,pollTimer=null;
-  var WRITES={add:1,update:1,"delete":1,settings:1},inflight=0,writesStarted=0,queue=Promise.resolve(),errMsg="";
+  var WRITES={add:1,update:1,"delete":1,settings:1,saveTemplate:1,saveReplies:1},inflight=0,writesStarted=0,queue=Promise.resolve(),errMsg="";
   var $=function(id){return document.getElementById(id)};
   function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
   function pad(n){return String(n).padStart(2,"0")}
@@ -348,6 +374,7 @@ textarea{min-height:74px;resize:vertical}
       lastJson=j;
       bookings=d.bookings||[];guides=d.guides||[];tours=d.tours||[];boats=d.boats||[];sailings=d.sailings||[];hasSail=!!d.sailings;
       perGuide=d.settings&&+d.settings.perGuide>0?+d.settings.perGuide:0;
+      templates=d.templates||null;autoReplies=d.autoReplies||null;
       render();
     }
     syncLine();
@@ -480,6 +507,11 @@ textarea{min-height:74px;resize:vertical}
     return L.join("\n");
   }
   function replies(r){
+    if(templates){
+      var v=tplVals(r);
+      return REPLY_CODES.filter(function(x){return x[0]!=="reply_stop"||(needsBoat(r)&&dayCap(r.date).stop>0)})
+        .map(function(x){return [x[1],fillTpl(tplText(x[0]),v)]});
+    }
     var g=(r.name||"您")+"您好，";
     return [
       ["確認收到",g+"這裡是蹦火仔，已收到您 "+md(r.date)+" 的預約詢問（共 "+total(r)+" 位）"+(r.code?"，團號 "+r.code:"")+"。我們確認導覽員後會盡快回覆您，謝謝！"],
@@ -554,6 +586,100 @@ textarea{min-height:74px;resize:vertical}
     return out;
   }
   function paxText(list){return list.map(function(p){return [p.name,p.id,p.birth,p.phone].filter(Boolean).join(" ")}).join("\n")}
+  /* ---------- 訊息範本 ---------- */
+  var templates=null,autoReplies=null,tplDraft={},tplMsg={},tplOpen={},kwDraft=null,lastTplBox=null;
+  var TPL_FIELDS=["姓名","日期","人數","大人","小孩","團號","集合時間","集合地點","遊程","遊程內容","本團安排","費用","訂金","缺名單人數","名單連結"];
+  var REPLY_CODES=[["reply_received","確認收到"],["reply_booked","確認成功"],["reply_detail","補問細節"],["reply_full","日期客滿"],["reply_stop","停航改期"],["reply_pretrip","行前通知"]];
+  function tplText(code){
+    if(!templates)return null;
+    for(var i=0;i<templates.length;i++)if(templates[i].code===code)return templates[i].text||templates[i].def;
+    return null;
+  }
+  // {欄位}、{欄位|預設字}、[ 有欄位空白就整段不顯示 ]
+  function fillTpl(tpl,vals){
+    function get(k){var p=k.split("|"),v=vals[p[0]];return (v==null||v==="")?(p[1]||""):String(v)}
+    var out=String(tpl).replace(/\[([\s\S]*?)\]/g,function(m,inner){
+      var ok=true;inner.replace(/\{([^{}]+)\}/g,function(x,k){if(!get(k))ok=false;return x});
+      return ok?inner:"";
+    });
+    return out.replace(/\{([^{}]+)\}/g,function(m,k){return get(k)}).replace(/\n{3,}/g,"\n\n").trim();
+  }
+  function tplVals(r){
+    var t=tourOf(r),n=total(r),lack=n-paxOf(r).length;
+    return {姓名:r.name||"您",日期:r.date?md(r.date):"",人數:String(n),大人:String(+r.adult||0),小孩:String(+r.kid||0),
+      團號:r.code||"",集合時間:r.time||"",集合地點:t&&t.meet||"",遊程:t?t.name:"",遊程內容:t&&t.content||"",本團安排:r.tourNote||"",
+      費用:r.quote?"$"+(+r.quote).toLocaleString("en-US"):"",訂金:r.deposit?"$"+(+r.deposit).toLocaleString("en-US"):"",
+      缺名單人數:lack>0?String(lack):"",名單連結:lack>0&&r.paxUrl?r.paxUrl:""};
+  }
+  function sampleBooking(){
+    var t=null;for(var i=0;i<tours.length;i++)if(boatTour(tours[i])){t=tours[i];break}
+    if(!t)t=tours[0]||null;
+    return {name:"王小明",date:addDays(today(),7),adult:10,kid:2,code:"1019-01",time:"16:20",tourId:t?t.id:"",quote:21000,deposit:5000,
+      passengers:[],paxUrl:"https://a24982268-afk.github.io/fuji268/pax.html?b=範例"};
+  }
+  function renderTemplates(){
+    var card=$("tplCard");
+    if(!templates){card.hidden=true;return}
+    card.hidden=false;
+    if(card.contains(document.activeElement)&&document.activeElement.tagName!=="BUTTON")return;  // 正在打字時不重畫
+    var C=$("tplChips");if(!C.childNodes.length)TPL_FIELDS.forEach(function(f){
+      var b=el("button","ghost","{"+f+"}");b.type="button";b.style.fontSize="13px";b.style.padding="3px 9px";
+      b.onmousedown=function(e){e.preventDefault()};
+      b.onclick=function(){var ta=lastTplBox;if(!ta)return;var v="{"+f+"}",a=ta.selectionStart,z=ta.selectionEnd;ta.value=ta.value.slice(0,a)+v+ta.value.slice(z);ta.selectionStart=ta.selectionEnd=a+v.length;ta.focus();ta.oninput()};
+      C.appendChild(b)});
+    var L=$("tplList");L.textContent="";
+    var sample=tplVals(sampleBooking());
+    templates.forEach(function(t){
+      var box=el("details","tplbox"),sm=el("summary",null,t.name+(t.text?"（已自訂）":""));box.appendChild(sm);
+      box.open=!!tplOpen[t.code]||tplDraft[t.code]!=null;box.ontoggle=function(){tplOpen[t.code]=box.open};
+      var inner=el("div","col");inner.style.gap="6px";inner.style.marginTop="8px";box.appendChild(inner);
+      var ta=el("textarea");ta.style.minHeight=t.code==="reply_pretrip"?"220px":"90px";ta.setAttribute("aria-label",t.name);
+      ta.value=tplDraft[t.code]!=null?tplDraft[t.code]:(t.text||t.def);
+      var pv=el("p","note tplpv");
+      function show(){pv.textContent="預覽：\n"+fillTpl(ta.value,sample)}
+      ta.onfocus=function(){lastTplBox=ta};
+      ta.oninput=function(){tplDraft[t.code]=ta.value;show();st.textContent=ta.value!==(t.text||t.def)?"尚未儲存":""};
+      inner.appendChild(ta);inner.appendChild(pv);show();
+      var row=el("div","acts"),sv=el("button","primary","儲存");sv.type="button";sv.disabled=!canWrite;
+      var st=el("span","msg",tplMsg[t.code]||(tplDraft[t.code]!=null&&tplDraft[t.code]!==(t.text||t.def)?"尚未儲存":""));
+      sv.onclick=function(){
+        var v=ta.value.trim()===t.def.trim()?"":ta.value;
+        delete tplDraft[t.code];tplMsg[t.code]="已儲存";
+        write("saveTemplate",{code:t.code,text:v},function(){t.text=v}).then(function(){setTimeout(function(){delete tplMsg[t.code];render()},2500)},function(){tplMsg[t.code]="沒有存到，請再按一次";tplDraft[t.code]=ta.value;render()});
+        render();
+      };
+      row.appendChild(sv);
+      if(t.text){var rs=el("button","ghost","恢復預設");rs.type="button";rs.disabled=!canWrite;
+        rs.onclick=function(){ta.value=t.def;ta.oninput()};row.appendChild(rs)}
+      row.appendChild(st);inner.appendChild(row);
+      L.appendChild(box);
+    });
+    renderKw();
+  }
+  function renderKw(){
+    var K=$("kwList");K.textContent="";
+    if(!kwDraft)kwDraft=(autoReplies||[]).map(function(r){return [r[0],r[1]]});
+    kwDraft.forEach(function(r,i){
+      var box=el("div","col kwrow");box.style.gap="6px";
+      var k=el("input");k.value=r[0];k.placeholder="關鍵字，例如：價格,費用,多少錢";k.setAttribute("aria-label","第 "+(i+1)+" 列關鍵字");
+      k.oninput=function(){r[0]=k.value;$("kwMsg").textContent="尚未儲存"};
+      var t=el("textarea");t.value=r[1];t.placeholder="回覆內容（空白＝不回）";t.setAttribute("aria-label","第 "+(i+1)+" 列回覆內容");
+      t.oninput=function(){r[1]=t.value;$("kwMsg").textContent="尚未儲存"};
+      box.appendChild(k);box.appendChild(t);
+      var a=el("div","acts");
+      [["↑",-1],["↓",1]].forEach(function(x){var b=el("button","ghost",x[0]);b.type="button";b.setAttribute("aria-label",x[1]<0?"往上":"往下");
+        b.disabled=i+x[1]<0||i+x[1]>=kwDraft.length;b.onclick=function(){var j=i+x[1],tmp=kwDraft[i];kwDraft[i]=kwDraft[j];kwDraft[j]=tmp;$("kwMsg").textContent="尚未儲存";renderKw()};a.appendChild(b)});
+      var del=el("button","ghost danger","刪除這列");del.type="button";del.onclick=function(){kwDraft.splice(i,1);$("kwMsg").textContent="尚未儲存";renderKw()};
+      a.appendChild(del);box.appendChild(a);K.appendChild(box);
+    });
+  }
+  $("kwAdd").onclick=function(){if(!kwDraft)kwDraft=[];kwDraft.push(["",""]);renderKw();var ins=$("kwList").querySelectorAll("input");ins[ins.length-1].focus()};
+  $("kwSave").onclick=function(){
+    var rows=(kwDraft||[]).filter(function(r){return String(r[0]).trim()||String(r[1]).trim()});
+    $("kwMsg").textContent="儲存中…";
+    write("saveReplies",{rows:rows},function(){autoReplies=rows}).then(function(){kwDraft=null;$("kwMsg").textContent="已儲存";renderKw()},function(){$("kwMsg").textContent="沒有存到，請再按一次"});
+  };
+
   var paxDraft={};
   function paxPanel(r){
     var box=el("div","col");
@@ -561,7 +687,7 @@ textarea{min-height:74px;resize:vertical}
     if(r.paxUrl){
       var lk=el("div","col");lk.style.gap="6px";
       lk.appendChild(el("p","msg","請客人自己填：把這個連結傳給客人，客人填完會直接存進來（出發日隔天失效）。"+(r.paxAt?"客人已於 "+r.paxAt+" 填寫。":"")));
-      var msgTxt=(r.name||"您")+"您好，這裡是蹦火仔。麻煩您幫忙填寫 "+md(r.date)+" 行程的旅客資料（印船班名冊用），謝謝！\n"+r.paxUrl;
+      var msgTxt=templates?fillTpl(tplText("reply_paxlink"),Object.assign(tplVals(r),{名單連結:r.paxUrl})):(r.name||"您")+"您好，這裡是蹦火仔。麻煩您幫忙填寫 "+md(r.date)+" 行程的旅客資料（印船班名冊用），謝謝！\n"+r.paxUrl;
       lk.appendChild(tplBox("填寫名單連結",msgTxt,r));
       box.appendChild(lk);
     }
@@ -975,7 +1101,7 @@ textarea{min-height:74px;resize:vertical}
     if(view==="guides")renderGuides();
     if(view==="sailings")renderSailings();
     if(view==="tours"){renderTourForm();renderTours()}
-    if(view==="settings"){if(document.activeElement!==$("sPer"))$("sPer").value=perGuide||"";renderBoats()}
+    if(view==="settings"){if(document.activeElement!==$("sPer"))$("sPer").value=perGuide||"";renderBoats();renderTemplates()}
   }
 
   /* booking form */
@@ -1123,7 +1249,7 @@ textarea{min-height:74px;resize:vertical}
   var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
   function crc32(b){var c=0xFFFFFFFF;for(var i=0;i<b.length;i++)c=CRC[(c^b[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0}
   // 不壓縮的 zip（xlsx 本身就是 zip）
-  function zip(files){
+  function zip(files,mime){
     var enc=new TextEncoder(),parts=[],central=[],off=0;
     function u16(n){return [n&255,(n>>>8)&255]}
     function u32(n){return [n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255]}
@@ -1137,7 +1263,7 @@ textarea{min-height:74px;resize:vertical}
     });
     var size=central.reduce(function(a,b){return a+b.length},0);
     var end=new Uint8Array([0x50,0x4B,0x05,0x06].concat(u16(0),u16(0),u16(files.length),u16(files.length),u32(size),u32(off),u16(0)));
-    return new Blob(parts.concat(central,[end]),{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    return new Blob(parts.concat(central,[end]),{type:mime||"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
   }
   function xlsx(sheets){
     var ns="http://schemas.openxmlformats.org/",head='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
@@ -1160,6 +1286,68 @@ textarea{min-height:74px;resize:vertical}
     sheets.forEach(function(s,i){files.push(["xl/worksheets/sheet"+(i+1)+".xml",sheetXml(s.rows,s.widths)])});
     return zip(files);
   }
+  /* 船班名冊 Word 檔：在手機上直接產生 .docx，可編輯 */
+  function docx(title,sub,cols,rows){
+    var ns="http://schemas.openxmlformats.org/",head='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    var W='xmlns:w="'+ns+'wordprocessingml/2006/main"',total=cols.reduce(function(a,c){return a+c[1]},0);
+    function run(t,o){o=o||{};
+      return '<w:r><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Microsoft JhengHei"/>'+(o.b?"<w:b/>":"")+(o.color?'<w:color w:val="'+o.color+'"/>':"")+
+        '<w:sz w:val="'+(o.sz||22)+'"/></w:rPr><w:t xml:space="preserve">'+xmlEsc(t)+"</w:t></w:r>"}
+    function para(t,o){o=o||{};return '<w:p><w:pPr><w:spacing w:after="'+(o.after==null?80:o.after)+'"/>'+(o.center?'<w:jc w:val="center"/>':"")+"</w:pPr>"+run(t,o)+"</w:p>"}
+    function cell(t,w,o){o=o||{};
+      return '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/>'+(o.span?'<w:gridSpan w:val="'+o.span+'"/>':"")+(o.fill?'<w:shd w:val="clear" w:color="auto" w:fill="'+o.fill+'"/>':"")+
+        '<w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/>'+(o.center?'<w:jc w:val="center"/>':"")+"</w:pPr>"+run(t,o)+"</w:p></w:tc>"}
+    var tr=function(inner,hdr){return '<w:tr><w:trPr><w:cantSplit/>'+(hdr?"<w:tblHeader/>":"")+'<w:trHeight w:val="400"/></w:trPr>'+inner+"</w:tr>"};
+    var b='<w:tblBorders>'+["top","left","bottom","right","insideH","insideV"].map(function(k){return "<w:"+k+' w:val="single" w:sz="4" w:space="0" w:color="999999"/>'}).join("")+"</w:tblBorders>";
+    var tbl='<w:tbl><w:tblPr><w:tblW w:w="'+total+'" w:type="dxa"/>'+b+'<w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>'+cols.map(function(c){return '<w:gridCol w:w="'+c[1]+'"/>'}).join("")+"</w:tblGrid>"+
+      tr(cols.map(function(c){return cell(c[0],c[1],{b:1,fill:"EEEEEE",center:1})}).join(""),true)+
+      rows.map(function(r){
+        if(r.group)return tr(cell(r.group,total,{span:cols.length,b:1,fill:"FDE7DC"}));
+        if(r.lack)return tr(cell("",cols[0][1])+cell(r.lack,total-cols[0][1],{span:cols.length-1,color:"B42318"}));
+        return tr(r.map(function(v,i){return cell(v,cols[i][1],{center:i===0||cols[i][2]})}).join(""));
+      }).join("")+"</w:tbl>";
+    var doc=head+"<w:document "+W+"><w:body>"+para(title,{b:1,sz:32,after:60})+para(sub,{color:"555555",sz:20,after:160})+tbl+
+      '<w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="850" w:right="850" w:bottom="850" w:left="850" w:header="425" w:footer="425" w:gutter="0"/></w:sectPr></w:body></w:document>';
+    return zip([
+      ["[Content_Types].xml",head+'<Types xmlns="'+ns+'package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'+
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'],
+      ["_rels/.rels",head+'<Relationships xmlns="'+ns+'package/2006/relationships"><Relationship Id="rId1" Type="'+ns+'officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'],
+      ["word/document.xml",doc]
+    ],"application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+  }
+  function saveBlob(blob,name){
+    var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(function(){URL.revokeObjectURL(a.href)},10000);
+  }
+  // 跟後端船班名冊一樣：當天已成單（含已排定／已通知）的團，依集合時間排
+  function manifestWord(full){
+    var d=$("mDate").value,M=$("wMsg");M.className="msg";
+    if(!d){M.className="msg err";M.textContent="請先選日期";return}
+    var list=bookings.filter(function(r){return r.date===d&&ACTIVE.indexOf(r.status)>=0})
+      .sort(function(a,b){return (a.time||"").localeCompare(b.time||"")||(a.createdAt||0)-(b.createdAt||0)});
+    if(!list.length){M.className="msg err";M.textContent=md(d)+" 沒有已成單的團。";return}
+    var rows=[],seq=0,people=0,listed=0;
+    list.forEach(function(r){
+      var n=total(r),pax=paxOf(r),t=tourOf(r);people+=n;listed+=pax.length;
+      rows.push({group:(r.time?r.time+" 集合　":"")+who(r)+(t?"　"+t.name:"")+"　共 "+n+" 人"+(full&&r.phone?"　聯絡電話 "+r.phone:"")});
+      pax.forEach(function(p){
+        seq++;
+        rows.push(full?[String(seq),p.name||"",p.id||"",p.birth||"",p.phone||""]:[String(seq),p.name||"",(String(p.birth||"").match(/^\d{4}/)||[""])[0],"☐",""]);
+      });
+      if(pax.length<n)rows.push({lack:"（尚缺 "+(n-pax.length)+" 位旅客資料）"});
+    });
+    var p=d.split("-"),dt=p[0]+"/"+(+p[1])+"/"+(+p[2])+"（"+wd(d)+"）",now=new Date();
+    var stamp=now.getFullYear()+"-"+pad(now.getMonth()+1)+"-"+pad(now.getDate())+" "+pad(now.getHours())+":"+pad(now.getMinutes());
+    var sub="共 "+list.length+" 團、"+people+" 人，名單已填 "+listed+" 人　｜　產生時間 "+stamp;
+    var blob=full?docx("蹦火仔 船班旅客名冊　"+dt,sub,[["序號",800,1],["姓名",2000],["身分證字號／護照",2600],["出生年月日",2000,1],["聯絡電話",2200]],rows)
+      :docx("蹦火仔 報到點名表　"+dt,sub,[["序號",800,1],["姓名",3000],["出生年",1600,1],["報到",1200,1],["備註",3000]],rows);
+    saveBlob(blob,(full?"蹦火仔船班名冊_":"蹦火仔報到點名表_")+d+".docx");
+    M.textContent="已下載"+(full?"完整名冊":"報到點名表")+"：共 "+list.length+" 團、"+people+" 人。"+(full?"內含證號與生日，請妥善保管。":"");
+  }
+  $("wFull").onclick=function(){manifestWord(true)};
+  $("wCheck").onclick=function(){manifestWord(false)};
+
   $("xForm").addEventListener("submit",function(e){
     e.preventDefault();
     var from=$("xFrom").value,to=$("xTo").value,scope=$("xScope").value;
