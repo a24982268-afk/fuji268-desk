@@ -245,6 +245,13 @@ textarea{min-height:74px;resize:vertical}
       <label>日期<input id="mDate" type="date" required></label>
       <div class="acts"><button class="primary" type="submit" id="mBtn">產生名冊</button><span class="msg" id="mMsg" role="status"></span></div>
       <div class="acts" id="mLinks"></div>
+      <p class="msg" style="margin:0">下載 Word 檔（可以編輯，直接存到這支手機或電腦）：</p>
+      <div class="acts">
+        <button class="ghost" type="button" id="wFull">下載 Word：完整名冊</button>
+        <button class="ghost" type="button" id="wCheck">下載 Word：報到點名表（無證號）</button>
+        <span class="msg" id="wMsg" role="status"></span>
+      </div>
+      <p class="msg" style="margin:0">報到點名表只有姓名與出生年，沒有身分證字號、生日月日與電話，適合在報到處公開使用。</p>
     </form>
     <form class="card" id="xForm">
       <p class="sec">匯出遊客資訊（Excel）</p>
@@ -1242,7 +1249,7 @@ textarea{min-height:74px;resize:vertical}
   var CRC=(function(){var t=[];for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
   function crc32(b){var c=0xFFFFFFFF;for(var i=0;i<b.length;i++)c=CRC[(c^b[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0}
   // 不壓縮的 zip（xlsx 本身就是 zip）
-  function zip(files){
+  function zip(files,mime){
     var enc=new TextEncoder(),parts=[],central=[],off=0;
     function u16(n){return [n&255,(n>>>8)&255]}
     function u32(n){return [n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255]}
@@ -1256,7 +1263,7 @@ textarea{min-height:74px;resize:vertical}
     });
     var size=central.reduce(function(a,b){return a+b.length},0);
     var end=new Uint8Array([0x50,0x4B,0x05,0x06].concat(u16(0),u16(0),u16(files.length),u16(files.length),u32(size),u32(off),u16(0)));
-    return new Blob(parts.concat(central,[end]),{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    return new Blob(parts.concat(central,[end]),{type:mime||"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
   }
   function xlsx(sheets){
     var ns="http://schemas.openxmlformats.org/",head='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
@@ -1279,6 +1286,68 @@ textarea{min-height:74px;resize:vertical}
     sheets.forEach(function(s,i){files.push(["xl/worksheets/sheet"+(i+1)+".xml",sheetXml(s.rows,s.widths)])});
     return zip(files);
   }
+  /* 船班名冊 Word 檔：在手機上直接產生 .docx，可編輯 */
+  function docx(title,sub,cols,rows){
+    var ns="http://schemas.openxmlformats.org/",head='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    var W='xmlns:w="'+ns+'wordprocessingml/2006/main"',total=cols.reduce(function(a,c){return a+c[1]},0);
+    function run(t,o){o=o||{};
+      return '<w:r><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Microsoft JhengHei"/>'+(o.b?"<w:b/>":"")+(o.color?'<w:color w:val="'+o.color+'"/>':"")+
+        '<w:sz w:val="'+(o.sz||22)+'"/></w:rPr><w:t xml:space="preserve">'+xmlEsc(t)+"</w:t></w:r>"}
+    function para(t,o){o=o||{};return '<w:p><w:pPr><w:spacing w:after="'+(o.after==null?80:o.after)+'"/>'+(o.center?'<w:jc w:val="center"/>':"")+"</w:pPr>"+run(t,o)+"</w:p>"}
+    function cell(t,w,o){o=o||{};
+      return '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/>'+(o.span?'<w:gridSpan w:val="'+o.span+'"/>':"")+(o.fill?'<w:shd w:val="clear" w:color="auto" w:fill="'+o.fill+'"/>':"")+
+        '<w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/>'+(o.center?'<w:jc w:val="center"/>':"")+"</w:pPr>"+run(t,o)+"</w:p></w:tc>"}
+    var tr=function(inner,hdr){return '<w:tr><w:trPr><w:cantSplit/>'+(hdr?"<w:tblHeader/>":"")+'<w:trHeight w:val="400"/></w:trPr>'+inner+"</w:tr>"};
+    var b='<w:tblBorders>'+["top","left","bottom","right","insideH","insideV"].map(function(k){return "<w:"+k+' w:val="single" w:sz="4" w:space="0" w:color="999999"/>'}).join("")+"</w:tblBorders>";
+    var tbl='<w:tbl><w:tblPr><w:tblW w:w="'+total+'" w:type="dxa"/>'+b+'<w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>'+cols.map(function(c){return '<w:gridCol w:w="'+c[1]+'"/>'}).join("")+"</w:tblGrid>"+
+      tr(cols.map(function(c){return cell(c[0],c[1],{b:1,fill:"EEEEEE",center:1})}).join(""),true)+
+      rows.map(function(r){
+        if(r.group)return tr(cell(r.group,total,{span:cols.length,b:1,fill:"FDE7DC"}));
+        if(r.lack)return tr(cell("",cols[0][1])+cell(r.lack,total-cols[0][1],{span:cols.length-1,color:"B42318"}));
+        return tr(r.map(function(v,i){return cell(v,cols[i][1],{center:i===0||cols[i][2]})}).join(""));
+      }).join("")+"</w:tbl>";
+    var doc=head+"<w:document "+W+"><w:body>"+para(title,{b:1,sz:32,after:60})+para(sub,{color:"555555",sz:20,after:160})+tbl+
+      '<w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="850" w:right="850" w:bottom="850" w:left="850" w:header="425" w:footer="425" w:gutter="0"/></w:sectPr></w:body></w:document>';
+    return zip([
+      ["[Content_Types].xml",head+'<Types xmlns="'+ns+'package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'+
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'],
+      ["_rels/.rels",head+'<Relationships xmlns="'+ns+'package/2006/relationships"><Relationship Id="rId1" Type="'+ns+'officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'],
+      ["word/document.xml",doc]
+    ],"application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+  }
+  function saveBlob(blob,name){
+    var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(function(){URL.revokeObjectURL(a.href)},10000);
+  }
+  // 跟後端船班名冊一樣：當天已成單（含已排定／已通知）的團，依集合時間排
+  function manifestWord(full){
+    var d=$("mDate").value,M=$("wMsg");M.className="msg";
+    if(!d){M.className="msg err";M.textContent="請先選日期";return}
+    var list=bookings.filter(function(r){return r.date===d&&ACTIVE.indexOf(r.status)>=0})
+      .sort(function(a,b){return (a.time||"").localeCompare(b.time||"")||(a.createdAt||0)-(b.createdAt||0)});
+    if(!list.length){M.className="msg err";M.textContent=md(d)+" 沒有已成單的團。";return}
+    var rows=[],seq=0,people=0,listed=0;
+    list.forEach(function(r){
+      var n=total(r),pax=paxOf(r),t=tourOf(r);people+=n;listed+=pax.length;
+      rows.push({group:(r.time?r.time+" 集合　":"")+who(r)+(t?"　"+t.name:"")+"　共 "+n+" 人"+(full&&r.phone?"　聯絡電話 "+r.phone:"")});
+      pax.forEach(function(p){
+        seq++;
+        rows.push(full?[String(seq),p.name||"",p.id||"",p.birth||"",p.phone||""]:[String(seq),p.name||"",(String(p.birth||"").match(/^\d{4}/)||[""])[0],"☐",""]);
+      });
+      if(pax.length<n)rows.push({lack:"（尚缺 "+(n-pax.length)+" 位旅客資料）"});
+    });
+    var p=d.split("-"),dt=p[0]+"/"+(+p[1])+"/"+(+p[2])+"（"+wd(d)+"）",now=new Date();
+    var stamp=now.getFullYear()+"-"+pad(now.getMonth()+1)+"-"+pad(now.getDate())+" "+pad(now.getHours())+":"+pad(now.getMinutes());
+    var sub="共 "+list.length+" 團、"+people+" 人，名單已填 "+listed+" 人　｜　產生時間 "+stamp;
+    var blob=full?docx("蹦火仔 船班旅客名冊　"+dt,sub,[["序號",800,1],["姓名",2000],["身分證字號／護照",2600],["出生年月日",2000,1],["聯絡電話",2200]],rows)
+      :docx("蹦火仔 報到點名表　"+dt,sub,[["序號",800,1],["姓名",3000],["出生年",1600,1],["報到",1200,1],["備註",3000]],rows);
+    saveBlob(blob,(full?"蹦火仔船班名冊_":"蹦火仔報到點名表_")+d+".docx");
+    M.textContent="已下載"+(full?"完整名冊":"報到點名表")+"：共 "+list.length+" 團、"+people+" 人。"+(full?"內含證號與生日，請妥善保管。":"");
+  }
+  $("wFull").onclick=function(){manifestWord(true)};
+  $("wCheck").onclick=function(){manifestWord(false)};
+
   $("xForm").addEventListener("submit",function(e){
     e.preventDefault();
     var from=$("xFrom").value,to=$("xTo").value,scope=$("xScope").value;
