@@ -77,6 +77,11 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .boatrow.stopped .acts .ghost:last-child{text-decoration:none}
 .item h3 .code{font-size:13px;font-weight:500;color:var(--muted);margin-left:4px}
 .inbox.unread .note{background:var(--bad-soft)}
+.tplbox{border:1.5px solid var(--line);border-radius:10px;padding:10px 12px}
+.tplbox summary{cursor:pointer;font-weight:700;font-size:14px}
+.tplpv{font-size:13px;color:var(--muted)}
+.kwrow{border:1.5px solid var(--line);border-radius:10px;padding:8px 10px}
+.tplhelp summary{cursor:pointer;font-size:14px;font-weight:700;color:var(--fg)}
 .note.lackn{background:var(--bad-soft);color:var(--bad);font-weight:700}
 .note{background:var(--bg);border-radius:8px;padding:8px 10px;font-size:14px;white-space:pre-wrap;word-break:break-word;margin:0}
 .acts{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -220,6 +225,20 @@ textarea{min-height:74px;resize:vertical}
         <div class="acts"><button class="primary" type="submit">加入／更新</button><span class="msg" id="bMsg" role="status"></span></div>
       </form>
     </div>
+    <div class="card" id="tplCard">
+      <p class="sec">訊息範本</p>
+      <p class="msg" style="margin:0">「回覆客人」的範本和機器人自動傳的訊息都在這裡改，存檔後所有手機同步。</p>
+      <details class="tplhelp"><summary>怎麼寫（可放入的欄位）</summary>
+        <p class="msg">點下面的欄位會插入到正在編輯的框裡，傳送時自動換成團單資料：</p>
+        <div class="chips" id="tplChips"></div>
+        <p class="msg">・<b>{集合時間|待定}</b>：欄位空白時顯示「待定」。<br>・<b>[ … ]</b>：方括號裡只要有欄位是空的，整段就不顯示。例如 <b>[，團號 {團號}]</b> 沒有團號時就不出現。</p>
+      </details>
+      <div id="tplList" class="col"></div>
+      <p class="sec" style="margin-top:8px">機器人關鍵字自動回覆</p>
+      <p class="msg" style="margin:0">客人訊息裡有關鍵字（用逗號分開）就回覆右邊的內容；由上往下找，第一個對到的就用。「（加好友）」是加好友時的歡迎訊息。</p>
+      <div id="kwList" class="col" style="gap:8px"></div>
+      <div class="acts"><button class="ghost" type="button" id="kwAdd">＋ 新增一列</button><button class="primary" type="button" id="kwSave">儲存關鍵字回覆</button><span class="msg" id="kwMsg" role="status"></span></div>
+    </div>
     <form class="card" id="mForm">
       <p class="sec">船班名冊</p>
       <p class="msg" style="margin:0">每天早上 7 點會自動產生 3 天後所有已成單團的旅客名冊（也會更新 1、2 天後的），放在店家 Google 雲端硬碟的「蹦火仔船班名冊」資料夾，打開 PDF 就能列印。名單臨時有變動，可以在這裡重新產生：</p>
@@ -263,7 +282,7 @@ textarea{min-height:74px;resize:vertical}
   var OVERDUE_H=24;  // 待確認超過幾小時標紅
   var view="bookings",filter="全部",editId=null,editTour=null,armed=null,open={};
   var token=null,authed=false,canWrite=true,seq=0,appliedSeq=0,lastJson="",lastSync=null,pollTimer=null;
-  var WRITES={add:1,update:1,"delete":1,settings:1},inflight=0,writesStarted=0,queue=Promise.resolve(),errMsg="";
+  var WRITES={add:1,update:1,"delete":1,settings:1,saveTemplate:1,saveReplies:1},inflight=0,writesStarted=0,queue=Promise.resolve(),errMsg="";
   var $=function(id){return document.getElementById(id)};
   function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
   function pad(n){return String(n).padStart(2,"0")}
@@ -348,6 +367,7 @@ textarea{min-height:74px;resize:vertical}
       lastJson=j;
       bookings=d.bookings||[];guides=d.guides||[];tours=d.tours||[];boats=d.boats||[];sailings=d.sailings||[];hasSail=!!d.sailings;
       perGuide=d.settings&&+d.settings.perGuide>0?+d.settings.perGuide:0;
+      templates=d.templates||null;autoReplies=d.autoReplies||null;
       render();
     }
     syncLine();
@@ -480,6 +500,11 @@ textarea{min-height:74px;resize:vertical}
     return L.join("\n");
   }
   function replies(r){
+    if(templates){
+      var v=tplVals(r);
+      return REPLY_CODES.filter(function(x){return x[0]!=="reply_stop"||(needsBoat(r)&&dayCap(r.date).stop>0)})
+        .map(function(x){return [x[1],fillTpl(tplText(x[0]),v)]});
+    }
     var g=(r.name||"您")+"您好，";
     return [
       ["確認收到",g+"這裡是蹦火仔，已收到您 "+md(r.date)+" 的預約詢問（共 "+total(r)+" 位）"+(r.code?"，團號 "+r.code:"")+"。我們確認導覽員後會盡快回覆您，謝謝！"],
@@ -554,6 +579,100 @@ textarea{min-height:74px;resize:vertical}
     return out;
   }
   function paxText(list){return list.map(function(p){return [p.name,p.id,p.birth,p.phone].filter(Boolean).join(" ")}).join("\n")}
+  /* ---------- 訊息範本 ---------- */
+  var templates=null,autoReplies=null,tplDraft={},tplMsg={},tplOpen={},kwDraft=null,lastTplBox=null;
+  var TPL_FIELDS=["姓名","日期","人數","大人","小孩","團號","集合時間","集合地點","遊程","遊程內容","本團安排","費用","訂金","缺名單人數","名單連結"];
+  var REPLY_CODES=[["reply_received","確認收到"],["reply_booked","確認成功"],["reply_detail","補問細節"],["reply_full","日期客滿"],["reply_stop","停航改期"],["reply_pretrip","行前通知"]];
+  function tplText(code){
+    if(!templates)return null;
+    for(var i=0;i<templates.length;i++)if(templates[i].code===code)return templates[i].text||templates[i].def;
+    return null;
+  }
+  // {欄位}、{欄位|預設字}、[ 有欄位空白就整段不顯示 ]
+  function fillTpl(tpl,vals){
+    function get(k){var p=k.split("|"),v=vals[p[0]];return (v==null||v==="")?(p[1]||""):String(v)}
+    var out=String(tpl).replace(/\[([\s\S]*?)\]/g,function(m,inner){
+      var ok=true;inner.replace(/\{([^{}]+)\}/g,function(x,k){if(!get(k))ok=false;return x});
+      return ok?inner:"";
+    });
+    return out.replace(/\{([^{}]+)\}/g,function(m,k){return get(k)}).replace(/\n{3,}/g,"\n\n").trim();
+  }
+  function tplVals(r){
+    var t=tourOf(r),n=total(r),lack=n-paxOf(r).length;
+    return {姓名:r.name||"您",日期:r.date?md(r.date):"",人數:String(n),大人:String(+r.adult||0),小孩:String(+r.kid||0),
+      團號:r.code||"",集合時間:r.time||"",集合地點:t&&t.meet||"",遊程:t?t.name:"",遊程內容:t&&t.content||"",本團安排:r.tourNote||"",
+      費用:r.quote?"$"+(+r.quote).toLocaleString("en-US"):"",訂金:r.deposit?"$"+(+r.deposit).toLocaleString("en-US"):"",
+      缺名單人數:lack>0?String(lack):"",名單連結:lack>0&&r.paxUrl?r.paxUrl:""};
+  }
+  function sampleBooking(){
+    var t=null;for(var i=0;i<tours.length;i++)if(boatTour(tours[i])){t=tours[i];break}
+    if(!t)t=tours[0]||null;
+    return {name:"王小明",date:addDays(today(),7),adult:10,kid:2,code:"1019-01",time:"16:20",tourId:t?t.id:"",quote:21000,deposit:5000,
+      passengers:[],paxUrl:"https://a24982268-afk.github.io/fuji268/pax.html?b=範例"};
+  }
+  function renderTemplates(){
+    var card=$("tplCard");
+    if(!templates){card.hidden=true;return}
+    card.hidden=false;
+    if(card.contains(document.activeElement)&&document.activeElement.tagName!=="BUTTON")return;  // 正在打字時不重畫
+    var C=$("tplChips");if(!C.childNodes.length)TPL_FIELDS.forEach(function(f){
+      var b=el("button","ghost","{"+f+"}");b.type="button";b.style.fontSize="13px";b.style.padding="3px 9px";
+      b.onmousedown=function(e){e.preventDefault()};
+      b.onclick=function(){var ta=lastTplBox;if(!ta)return;var v="{"+f+"}",a=ta.selectionStart,z=ta.selectionEnd;ta.value=ta.value.slice(0,a)+v+ta.value.slice(z);ta.selectionStart=ta.selectionEnd=a+v.length;ta.focus();ta.oninput()};
+      C.appendChild(b)});
+    var L=$("tplList");L.textContent="";
+    var sample=tplVals(sampleBooking());
+    templates.forEach(function(t){
+      var box=el("details","tplbox"),sm=el("summary",null,t.name+(t.text?"（已自訂）":""));box.appendChild(sm);
+      box.open=!!tplOpen[t.code]||tplDraft[t.code]!=null;box.ontoggle=function(){tplOpen[t.code]=box.open};
+      var inner=el("div","col");inner.style.gap="6px";inner.style.marginTop="8px";box.appendChild(inner);
+      var ta=el("textarea");ta.style.minHeight=t.code==="reply_pretrip"?"220px":"90px";ta.setAttribute("aria-label",t.name);
+      ta.value=tplDraft[t.code]!=null?tplDraft[t.code]:(t.text||t.def);
+      var pv=el("p","note tplpv");
+      function show(){pv.textContent="預覽：\n"+fillTpl(ta.value,sample)}
+      ta.onfocus=function(){lastTplBox=ta};
+      ta.oninput=function(){tplDraft[t.code]=ta.value;show();st.textContent=ta.value!==(t.text||t.def)?"尚未儲存":""};
+      inner.appendChild(ta);inner.appendChild(pv);show();
+      var row=el("div","acts"),sv=el("button","primary","儲存");sv.type="button";sv.disabled=!canWrite;
+      var st=el("span","msg",tplMsg[t.code]||(tplDraft[t.code]!=null&&tplDraft[t.code]!==(t.text||t.def)?"尚未儲存":""));
+      sv.onclick=function(){
+        var v=ta.value.trim()===t.def.trim()?"":ta.value;
+        delete tplDraft[t.code];tplMsg[t.code]="已儲存";
+        write("saveTemplate",{code:t.code,text:v},function(){t.text=v}).then(function(){setTimeout(function(){delete tplMsg[t.code];render()},2500)},function(){tplMsg[t.code]="沒有存到，請再按一次";tplDraft[t.code]=ta.value;render()});
+        render();
+      };
+      row.appendChild(sv);
+      if(t.text){var rs=el("button","ghost","恢復預設");rs.type="button";rs.disabled=!canWrite;
+        rs.onclick=function(){ta.value=t.def;ta.oninput()};row.appendChild(rs)}
+      row.appendChild(st);inner.appendChild(row);
+      L.appendChild(box);
+    });
+    renderKw();
+  }
+  function renderKw(){
+    var K=$("kwList");K.textContent="";
+    if(!kwDraft)kwDraft=(autoReplies||[]).map(function(r){return [r[0],r[1]]});
+    kwDraft.forEach(function(r,i){
+      var box=el("div","col kwrow");box.style.gap="6px";
+      var k=el("input");k.value=r[0];k.placeholder="關鍵字，例如：價格,費用,多少錢";k.setAttribute("aria-label","第 "+(i+1)+" 列關鍵字");
+      k.oninput=function(){r[0]=k.value;$("kwMsg").textContent="尚未儲存"};
+      var t=el("textarea");t.value=r[1];t.placeholder="回覆內容（空白＝不回）";t.setAttribute("aria-label","第 "+(i+1)+" 列回覆內容");
+      t.oninput=function(){r[1]=t.value;$("kwMsg").textContent="尚未儲存"};
+      box.appendChild(k);box.appendChild(t);
+      var a=el("div","acts");
+      [["↑",-1],["↓",1]].forEach(function(x){var b=el("button","ghost",x[0]);b.type="button";b.setAttribute("aria-label",x[1]<0?"往上":"往下");
+        b.disabled=i+x[1]<0||i+x[1]>=kwDraft.length;b.onclick=function(){var j=i+x[1],tmp=kwDraft[i];kwDraft[i]=kwDraft[j];kwDraft[j]=tmp;$("kwMsg").textContent="尚未儲存";renderKw()};a.appendChild(b)});
+      var del=el("button","ghost danger","刪除這列");del.type="button";del.onclick=function(){kwDraft.splice(i,1);$("kwMsg").textContent="尚未儲存";renderKw()};
+      a.appendChild(del);box.appendChild(a);K.appendChild(box);
+    });
+  }
+  $("kwAdd").onclick=function(){if(!kwDraft)kwDraft=[];kwDraft.push(["",""]);renderKw();var ins=$("kwList").querySelectorAll("input");ins[ins.length-1].focus()};
+  $("kwSave").onclick=function(){
+    var rows=(kwDraft||[]).filter(function(r){return String(r[0]).trim()||String(r[1]).trim()});
+    $("kwMsg").textContent="儲存中…";
+    write("saveReplies",{rows:rows},function(){autoReplies=rows}).then(function(){kwDraft=null;$("kwMsg").textContent="已儲存";renderKw()},function(){$("kwMsg").textContent="沒有存到，請再按一次"});
+  };
+
   var paxDraft={};
   function paxPanel(r){
     var box=el("div","col");
@@ -561,7 +680,7 @@ textarea{min-height:74px;resize:vertical}
     if(r.paxUrl){
       var lk=el("div","col");lk.style.gap="6px";
       lk.appendChild(el("p","msg","請客人自己填：把這個連結傳給客人，客人填完會直接存進來（出發日隔天失效）。"+(r.paxAt?"客人已於 "+r.paxAt+" 填寫。":"")));
-      var msgTxt=(r.name||"您")+"您好，這裡是蹦火仔。麻煩您幫忙填寫 "+md(r.date)+" 行程的旅客資料（印船班名冊用），謝謝！\n"+r.paxUrl;
+      var msgTxt=templates?fillTpl(tplText("reply_paxlink"),Object.assign(tplVals(r),{名單連結:r.paxUrl})):(r.name||"您")+"您好，這裡是蹦火仔。麻煩您幫忙填寫 "+md(r.date)+" 行程的旅客資料（印船班名冊用），謝謝！\n"+r.paxUrl;
       lk.appendChild(tplBox("填寫名單連結",msgTxt,r));
       box.appendChild(lk);
     }
@@ -975,7 +1094,7 @@ textarea{min-height:74px;resize:vertical}
     if(view==="guides")renderGuides();
     if(view==="sailings")renderSailings();
     if(view==="tours"){renderTourForm();renderTours()}
-    if(view==="settings"){if(document.activeElement!==$("sPer"))$("sPer").value=perGuide||"";renderBoats()}
+    if(view==="settings"){if(document.activeElement!==$("sPer"))$("sPer").value=perGuide||"";renderBoats();renderTemplates()}
   }
 
   /* booking form */
