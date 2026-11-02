@@ -256,6 +256,15 @@ textarea{min-height:74px;resize:vertical}
       <p class="msg" style="margin:0">設定後，每個團單會依總人數自動算出需要幾位導覽員，不足時會標紅。</p>
       <div class="acts"><button class="primary" type="submit">儲存</button><span class="msg" id="sMsg" role="status"></span></div>
     </form>
+    <div class="card" id="arCard" hidden>
+      <p class="sec">資料封存（維持速度）</p>
+      <p class="msg" style="margin:0">出發日超過設定天數的團單（含取消）、船班、行程，每天早上 7 點自動移到試算表的「封存團單／封存船班／封存行程」工作表。資料都還在，只是接團台不再讀取，速度才不會越來越慢；匯出 Excel 選到舊日期時會自動把封存的一起算進去。</p>
+      <div class="acts">
+        <label style="flex:1 1 200px">出發幾天後封存（0＝不封存）<input id="arDays" type="number" min="0" inputmode="numeric"></label>
+        <button class="primary" type="button" id="arSave" style="align-self:flex-end">儲存</button>
+      </div>
+      <div class="acts"><button class="ghost" type="button" id="arNow">立即封存</button><span class="msg" id="arMsg" role="status"></span></div>
+    </div>
     <div class="card">
       <p class="sec">導覽員名冊</p>
       <p class="msg" style="margin:0">新增或刪除導覽員，並標記請假日；請假那天排班時會反灰不能選。</p>
@@ -344,7 +353,7 @@ textarea{min-height:74px;resize:vertical}
     return baseStatus(r)===tab;
   }
   var VIEWS=[["bookings","團單"],["sailings","船班"],["visitors","遊客資料"],["guides","導覽員安排"],["tours","遊程"],["settings","設定"]];
-  var bookings=[],guides=[],tours=[],boats=[],sailings=[],trips=[],hasTrips=false,aSel={},perGuide=0,sDay=null,aDay=null;
+  var bookings=[],guides=[],tours=[],boats=[],sailings=[],trips=[],hasTrips=false,hasArchive=false,archiveDays=365,aSel={},perGuide=0,sDay=null,aDay=null;
   var hasSail=false;  // 後端還沒更新（沒有船班資料）時，不檢查船位
   var OVERDUE_H=24;  // 待確認超過幾小時標紅
   var view="bookings",filter="全部",editId=null,editTour=null,armed=null,open={};
@@ -517,6 +526,7 @@ textarea{min-height:74px;resize:vertical}
       lastJson=j;
       bookings=d.bookings||[];guides=d.guides||[];tours=d.tours||[];boats=d.boats||[];sailings=d.sailings||[];hasSail=!!d.sailings;useBatch=!!(d.features&&d.features.batch);trips=d.trips||[];hasTrips=!!d.trips;
       perGuide=d.settings&&+d.settings.perGuide>0?+d.settings.perGuide:0;
+      hasArchive=!!(d.features&&d.features.archive);archiveDays=d.settings&&d.settings.archiveDays!=null?+d.settings.archiveDays:365;
       templates=d.templates||null;autoReplies=d.autoReplies||null;
       render();
     }
@@ -1403,7 +1413,7 @@ textarea{min-height:74px;resize:vertical}
     if(view==="guides")renderAssign();
     if(view==="sailings")renderSailings();
     if(view==="tours"){renderTourForm();renderTours()}
-    if(view==="settings"){if(document.activeElement!==$("sPer"))$("sPer").value=perGuide||"";renderBoats();renderGuides();renderTemplates()}
+    if(view==="settings"){if(document.activeElement!==$("sPer"))$("sPer").value=perGuide||"";renderArchive();renderBoats();renderGuides();renderTemplates()}
   }
 
   /* booking form */
@@ -1654,9 +1664,25 @@ textarea{min-height:74px;resize:vertical}
 
   $("xForm").addEventListener("submit",function(e){
     e.preventDefault();
-    var from=$("xFrom").value,to=$("xTo").value,scope=$("xScope").value;
+    var from=$("xFrom").value,to=$("xTo").value;
+    // 範圍包含已封存的日期時，先去後端拿封存的團單
+    if(hasArchive&&archiveDays&&(!from||from<addDays(today(),-archiveDays))){
+      $("xMsg").className="msg";$("xMsg").textContent="讀取封存資料中…";
+      call("archived",{from:from,to:to}).then(function(res){
+        var seen={};bookings.forEach(function(r){seen[r.id]=1});
+        exportExcel(bookings.concat((res.bookings||[]).filter(function(r){return !seen[r.id]})),from,to);
+      },function(err){
+        if(err&&err.code==="auth")return;
+        $("xMsg").className="msg err";$("xMsg").textContent="讀不到封存資料（"+(err&&err.code==="unavailable"?"網路不穩":"請稍後再試")+"），沒有下載。";
+      });
+      return;
+    }
+    exportExcel(bookings,from,to);
+  });
+  function exportExcel(all,from,to){
+    var scope=$("xScope").value;
     var ok=scope==="all"?function(s){return s!=="取消"}:function(s){return ACTIVE.indexOf(s)>=0||s==="已完成"};
-    var list=bookings.filter(function(r){return ok(r.status)&&(!from||(r.date&&r.date>=from))&&(!to||(r.date&&r.date<=to))});
+    var list=all.filter(function(r){return ok(r.status)&&(!from||(r.date&&r.date>=from))&&(!to||(r.date&&r.date<=to))});
     list.sort(function(a,b){return (a.date||"9999").localeCompare(b.date||"9999")||(a.time||"").localeCompare(b.time||"")||(a.createdAt||0)-(b.createdAt||0)});
     if(!list.length){$("xMsg").className="msg err";$("xMsg").textContent="這個範圍沒有團單。";return}
     var sum={},keys=[],people=0;
@@ -1675,8 +1701,30 @@ textarea{min-height:74px;resize:vertical}
     var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;
     document.body.appendChild(a);a.click();a.remove();
     setTimeout(function(){URL.revokeObjectURL(a.href)},10000);
-    $("xMsg").className="msg";$("xMsg").textContent="已下載：共 "+list.length+" 團、"+people+" 人。";
-  });
+    var na=list.filter(function(r){return r.archived}).length;
+    $("xMsg").className="msg";$("xMsg").textContent="已下載：共 "+list.length+" 團、"+people+" 人"+(na?"（含封存 "+na+" 團）":"")+"。";
+  }
+
+  /* 資料封存 */
+  function renderArchive(){
+    $("arCard").hidden=!hasArchive;if(!hasArchive)return;
+    if(document.activeElement!==$("arDays"))$("arDays").value=archiveDays;
+    var nb=$("arNow");nb.textContent=armed==="archive"?"再按一次確認封存（出發超過 "+archiveDays+" 天的）":"立即封存";nb.disabled=!canWrite||!archiveDays;
+    if(!$("arMsg").dataset.keep)$("arMsg").textContent="接團台目前讀取 "+bookings.length+" 張團單。";
+  }
+  $("arSave").onclick=function(){
+    var n=Math.max(0,Math.floor(+$("arDays").value||0));
+    write("settings",{data:{archiveDays:n}},function(){archiveDays=n}).then(function(){$("arMsg").dataset.keep="1";$("arMsg").textContent=n?"已儲存：出發 "+n+" 天後自動封存。":"已儲存：不自動封存。";setTimeout(function(){delete $("arMsg").dataset.keep},4000)},fail);
+  };
+  $("arNow").onclick=function(){
+    if(armed!=="archive"){armed="archive";render();return}
+    armed=null;$("arMsg").dataset.keep="1";$("arMsg").textContent="封存中…";render();
+    write("archive",{days:archiveDays}).then(function(r){
+      var i=r&&r.info||{};
+      $("arMsg").textContent="已封存 "+(i.bookings||0)+" 張團單、"+(i.sailings||0)+" 個船班、"+(i.trips||0)+" 個行程。";
+      setTimeout(function(){delete $("arMsg").dataset.keep},6000);
+    },function(err){delete $("arMsg").dataset.keep;fail(err)});
+  };
 
   $("sForm").addEventListener("submit",function(e){
     e.preventDefault();var n=+$("sPer").value||0;

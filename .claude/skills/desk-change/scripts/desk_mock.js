@@ -35,6 +35,14 @@ function makeBackend(data) {
       if (q.op === 'guides') { const t = data.trips.find(t => t.id === q.tripId); if (t) t.guides = q.guides; }
       return { ok: true, id: q.tripId };
     }
+    if (q.action === 'archive') {
+      const days = q.days || 365, cut = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
+      data.archivedBookings = data.archivedBookings || [];
+      const old = data.bookings.filter(b => b.date && b.date < cut);
+      data.archivedBookings.push(...old.map(b => Object.assign({}, b, { archived: true })));
+      data.bookings = data.bookings.filter(b => !old.includes(b));
+      return { ok: true, info: { bookings: old.length, sailings: 0, trips: 0 } };
+    }
     return { ok: true };
   }
   return op;
@@ -54,6 +62,7 @@ async function open(o) {
     requests.push(q.action + (q.ops ? '(' + q.ops.length + ')' : ''));
     let out = { ok: true, data };
     if (q.action === 'batch') out.results = q.ops.map(op);
+    else if (q.action === 'archived') out = { ok: true, bookings: (data.archivedBookings || []).filter(b => (!q.from || b.date >= q.from) && (!q.to || b.date <= q.to)) };
     else if (q.action && q.action !== 'load') Object.assign(out, op(q));
     if (o.latency && q.action !== 'load') await new Promise(z => setTimeout(z, o.latency));
     await r.fulfill({ contentType: 'application/json', body: JSON.stringify(out) });

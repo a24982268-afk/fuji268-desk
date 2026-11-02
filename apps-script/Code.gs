@@ -30,7 +30,8 @@ var SHEETS = {
   sailings: { title: '船班', cols: [['id', '編號'], ['date', '日期'], ['boat', '船名'], ['capacity', '當日載客上限'], ['stop', '停航'], ['note', '備註'], ['guides', '導覽員']] }
 };
 var SETTINGS_TITLE = '設定';
-var SETTINGS = [['perGuide', '每位導覽員最多帶幾人']];
+var SETTINGS = [['perGuide', '每位導覽員最多帶幾人'], ['archiveDays', '出發幾天後自動封存（0＝不封存，空白＝365）']];
+var ARCHIVE_DAYS_DEFAULT = 365;
 var NUM = { adult: 1, kid: 1, quote: 1, deposit: 1, capacity: 1, guideNeed: 1 };
 
 /* ---------- 試算表選單與初始化 ---------- */
@@ -142,6 +143,7 @@ function handle(req) {
   if (req.action === 'paxSubmit') return paxSubmit_(String(req.id || ''), String(req.k || ''), req.passengers);
   if (!checkToken(req.token)) return { ok: false, code: 'auth' };
   if (req.action === 'load') return { ok: true, data: loadAll() };
+  if (req.action === 'archived') return { ok: true, bookings: readArchived_(String(req.from || ''), String(req.to || '')) };
   if (req.action === 'manifest') {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(req.date))) return { ok: false, code: 'error', message: '日期格式不對' };
     return { ok: true, manifest: makeManifest(req.date) };
@@ -182,6 +184,8 @@ function writeOp_(req) {
     saveReplies_(req.rows);
   } else if (req.action === 'trip') {
     id = tripOp_(req);
+  } else if (req.action === 'archive') {
+    return { ok: true, id: null, info: archiveOld_(req.days == null ? readSettings().archiveDays : Math.max(1, +req.days || 0)) };
   } else {
     if (!SHEETS[coll]) return { ok: false, code: 'error', message: '未知的資料類別' };
     if (req.action === 'add') {
@@ -376,8 +380,11 @@ function putRow(coll, id, data, merge) {
 }
 
 function readSettings() {
-  var vals = settingsSheet().getDataRange().getDisplayValues(), o = { perGuide: 0 };
-  vals.slice(1).forEach(function (r) { if (r[0] === 'perGuide') o.perGuide = +r[1] || 0; });
+  var vals = settingsSheet().getDataRange().getDisplayValues(), o = { perGuide: 0, archiveDays: ARCHIVE_DAYS_DEFAULT };
+  vals.slice(1).forEach(function (r) {
+    if (r[0] === 'perGuide') o.perGuide = +r[1] || 0;
+    if (r[0] === 'archiveDays' && String(r[1]).trim() !== '') o.archiveDays = Math.max(0, +r[1] || 0);
+  });
   return o;
 }
 
@@ -396,7 +403,7 @@ function loadAll() {
   var since = Utilities.formatDate(new Date(Date.now() - 864e5), TZ, 'yyyy-MM-dd');
   bookings.forEach(function (b) { if (b.status !== '取消' && (!b.date || b.date >= since)) b.paxUrl = paxUrl_(b.id); });
   return { bookings: bookings, guides: readRows('guides'), tours: readRows('tours'), boats: readRows('boats'), sailings: readRows('sailings'), trips: readRows('trips'), settings: readSettings(),
-    templates: templateList_(), autoReplies: replyRows_(), features: { batch: 1 } };
+    templates: templateList_(), autoReplies: replyRows_(), features: { batch: 1, archive: 1 } };
 }
 
 function newId() {
@@ -440,6 +447,7 @@ function dailyManifest() {
     makeManifest(Utilities.formatDate(new Date(Date.now() + d * 864e5), TZ, 'yyyy-MM-dd'));
   });
   try { paxReminders_(); } catch (err) { console.error('名單提醒失敗', err); }
+  try { archiveAuto_(); } catch (err) { console.error('自動封存失敗', err); }
 }
 
 function manifestFolder() {
@@ -1206,4 +1214,93 @@ function leaveData_(b) {
 function deleteTrip_(id) {
   var sh = sheetOf('trips'), r = findRow(sh, id);
   if (r >= 0) sh.deleteRow(r + 1);
+}
+
+/* ---------- 封存：出發很久以前的團單、船班、行程移到「封存」工作表，接團台不再讀取，速度維持 ---------- */
+var ARCHIVE = { bookings: '封存團單', sailings: '封存船班', trips: '封存行程' };
+
+function archiveAuto_() {
+  var days = readSettings().archiveDays;
+  if (!days) return null;
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try { return archiveOld_(days); } finally { lock.releaseLock(); }
+}
+
+// 呼叫前要先拿到鎖。日期早於「今天－days」的列整列搬走；沒有日期的團單，取消或待確認且建立超過 days 天的也搬走
+function archiveOld_(days) {
+  if (!days) return { bookings: 0, sailings: 0, trips: 0 };
+  var cutoff = Utilities.formatDate(new Date(Date.now() - days * 864e5), TZ, 'yyyy-MM-dd');
+  var out = {};
+  out.bookings = moveRows_('bookings', function (o) {
+    if (o.date) return o.date < cutoff;
+    return (o.status === '取消' || o.status === '待確認') && o.createdAt && String(o.createdAt).slice(0, 10) < cutoff;
+  });
+  out.sailings = moveRows_('sailings', function (o) { return o.date && o.date < cutoff; });
+  out.trips = moveRows_('trips', function (o) { return o.date && o.date < cutoff; });
+  SpreadsheetApp.flush();
+  CacheService.getScriptCache().remove('avail');
+  return out;
+}
+
+// 依標題對欄搬列（店家自己加的欄也會一起搬），一次讀、一次寫，不一列一列刪
+function moveRows_(coll, pick) {
+  var src = sheetOf(coll), last = src.getLastRow();
+  if (last < 2) return 0;
+  columnsOf(src, coll);
+  var width = src.getLastColumn(), head = src.getRange(1, 1, 1, width).getDisplayValues()[0];
+  var rows = src.getRange(2, 1, last - 1, width).getValues();
+  var keyIdx = {};
+  SHEETS[coll].cols.forEach(function (c) { var i = head.indexOf(c[1]); if (i < 0) i = head.indexOf(c[0]); if (i >= 0) keyIdx[c[0]] = i; });
+  var move = [], keep = [];
+  rows.forEach(function (r) {
+    var o = {};
+    Object.keys(keyIdx).forEach(function (k) { o[k] = String(r[keyIdx[k]] == null ? '' : r[keyIdx[k]]); });
+    if (!o.id) return;
+    (pick(o) ? move : keep).push(r);
+  });
+  if (!move.length) return 0;
+  var dst = archiveSheet_(coll, head), dHead = dst.getRange(1, 1, 1, dst.getLastColumn()).getDisplayValues()[0];
+  var mapped = move.map(function (r) { return dHead.map(function (h) { var i = head.indexOf(h); return i >= 0 ? r[i] : ''; }); });
+  var at = Math.max(dst.getLastRow(), 1) + 1;
+  dst.getRange(at, 1, mapped.length, dHead.length).setNumberFormat('@').setValues(mapped);
+  src.getRange(2, 1, last - 1, width).clearContent();
+  if (keep.length) src.getRange(2, 1, keep.length, width).setValues(keep);
+  return move.length;
+}
+
+// 封存工作表：標題跟原本的一樣，原本後來多了欄位就補在右邊
+function archiveSheet_(coll, head) {
+  var ss = book(), title = ARCHIVE[coll], sh = ss.getSheetByName(title);
+  if (!sh) {
+    sh = ss.insertSheet(title);
+    sh.getRange(1, 1, sh.getMaxRows(), head.length).setNumberFormat('@');
+    sh.getRange(1, 1, 1, head.length).setValues([head]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+    return sh;
+  }
+  var cur = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), 1)).getDisplayValues()[0];
+  head.forEach(function (h) {
+    if (!h || cur.indexOf(h) >= 0) return;
+    var at = cur.length + 1;
+    sh.getRange(1, at, sh.getMaxRows(), 1).setNumberFormat('@');
+    sh.getRange(1, at).setValue(h).setFontWeight('bold');
+    cur.push(h);
+  });
+  return sh;
+}
+
+// 匯出 Excel 時讀封存的團單（from、to 空白＝不限）
+function readArchived_(from, to) {
+  var sh = book().getSheetByName(ARCHIVE.bookings);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var head = sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0];
+  var idx = {};
+  SHEETS.bookings.cols.forEach(function (c) { var i = head.indexOf(c[1]); if (i < 0) i = head.indexOf(c[0]); if (i >= 0) idx[c[0]] = i; });
+  return sh.getRange(2, 1, sh.getLastRow() - 1, head.length).getDisplayValues().map(function (r) {
+    var o = {};
+    Object.keys(idx).forEach(function (k) { o[k] = fromCell(k, r[idx[k]]); });
+    o.archived = true;
+    return o;
+  }).filter(function (o) { return o.id && (!from || (o.date && o.date >= from)) && (!to || (o.date && o.date <= to)); });
 }
