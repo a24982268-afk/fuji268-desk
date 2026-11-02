@@ -24,6 +24,8 @@
 - 行程（trips）：同一天幾張團單合併、共用導覽員。合併／移出／解散／排導覽員都走後端 `trip` 動作一次完成。
 - 船隻（boats）、船班（sailings）：一天一艘船一班；當日船位＝有開、沒停航的船上限加總，只算要搭船的遊程（遊程「搭船」欄，空白依名稱判斷）。
 - 導覽員（guides）：`off` 請假日。遊程（tours）。設定、訊息範本、自動回覆、LINE 訊息（紀錄）。
+- 封存團單／封存船班／封存行程：出發超過「設定 archiveDays」（預設 365）天的列，每天 7 點由 `archiveAuto_` 依標題搬過去（`moveRows_`）；
+  `loadAll` 不讀封存，匯出 Excel 用 `archived` 動作另外讀。新增需要歷史資料的功能時要記得封存的部分。
 
 Script Properties（機密，只在 Apps Script 裡）：`PW_HASH SALT SECRET SHEET_ID LINE_TOKEN LINE_KEY LINE_TESTERS LINE_LIVE PAX_KEY CODE_SEQ`。
 
